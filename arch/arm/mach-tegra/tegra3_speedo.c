@@ -521,10 +521,14 @@ static const int cpu_speedo_nominal_millivolts[] =
 /* speedo_id
              0,    1,    2,    3,    4,    5,    6,    7,    8,    9,  10,  11,   12,  13 */
 <<<<<<< HEAD
+<<<<<<< HEAD
 	{ 1125, 1150, 1150, 1150, 1237, 1237, 1237, 1237, 1150, 912, 850, 850, 1237, 1240};
 =======
 	{ 1125, 1150, 1150, 1150, 1237, 1237, 1237, 1237, 1150, 912, 850, 850, 1237, 1350};
 >>>>>>> 89569cb... Patch: Adding OC Up 1700 for variants 2 & 3, and OC down to 1600 for variants 0 & 1.  Increased GPU voltage to stock and raise CPU voltages a bit.
+=======
+	{ 1125, 1150, 1150, 1150, 1237, 1237, 1237, 1237, 1150, 912, 850, 850, 1237, 1300};
+>>>>>>> 5300bfa... Patch: Part 2: Adding OC Up 1700 for variants 2 & 3, and OC down to 1600 for variants 0 & 1.  Increased GPU voltage to stock and raise CPU voltages a bit.
 
 int tegra_cpu_speedo_mv(void)
 {
@@ -539,13 +543,13 @@ int tegra_core_speedo_mv(void)
 		return 1200;
 	case 1:
 		if (cpu_speedo_id == 13)
-			return 1350;
+			return 1300;
 		if ((cpu_speedo_id != 7) && (cpu_speedo_id != 8))
-			return 1350;
+			return 1300;
 		/* fall thru for T30L or T30SL */
 	case 2:
 		if (cpu_speedo_id != 13)
-			return 1350;
+			return 1300;
 		/* T37 */
 		return 1350;
 	case 3:
