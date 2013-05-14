@@ -1,0 +1,14 @@
+--- arch/arm/mach-tegra/cpu-tegra.c
++++ arch/arm/mach-tegra/cpu-tegra.c
+@@ -824,11 +865,6 @@
+ 	return ret;
+ }
+ 
+-#ifdef CONFIG_TEGRA_CPU_AP33
+-#define BOOST_CPU_FREQ_MIN 1500000
+-#else
+-#define BOOST_CPU_FREQ_MIN 1700000
+-#endif
+ 
+ static int tegra_pm_notify(struct notifier_block *nb, unsigned long event,
+ 	void *dummy)

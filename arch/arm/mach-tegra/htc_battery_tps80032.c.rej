@@ -1,0 +1,52 @@
+--- arch/arm/mach-tegra/htc_battery_tps80032.c
++++ arch/arm/mach-tegra/htc_battery_tps80032.c
+@@ -496,12 +496,12 @@
+ 			BATT_LOG("Debug flag is set to force AC charging, fake as AC");
+ 			htc_batt_info.rep.charging_source = CHARGER_AC;
+ 		} else {
+-                    if(fast_charge){
+-                        BATT_LOG("fast_charge is set to force AC charging");  
+-                        htc_batt_info.rep.charging_source = CHARGER_AC;
+-                } else 
+-                    htc_batt_info.rep.charging_source = CHARGER_USB;
+-                }
++			if(fast_charge){
++				BATT_LOG("fast_charge is set to force AC charging");	
++				htc_batt_info.rep.charging_source = CHARGER_AC;
++			} else 
++				htc_batt_info.rep.charging_source = CHARGER_USB;
++		}
+ 		break;
+ 	case CONNECT_TYPE_AC:
+ 		BATT_LOG("cable AC");
+@@ -1665,7 +1694,18 @@
+     else
+         return -EINVAL;
+ 
+-    return size;
++	value = ((int) simple_strtoul(buf, NULL, 10));
++	if(value == 0 || value == 1){
++		if(fast_charge != value){
++			fast_charge = value;
++			BATT_LOG("set fast_charge %d", fast_charge);
++			reevaluate_charger();
++		}
++	}
++	else
++		return -EINVAL;
++			
++	return size;
+ }
+ 
+ static struct device_attribute tps80032_batt_attrs[] = {
+@@ -1678,8 +1718,8 @@
+ 	__ATTR(quickboot_enabled, S_IWUSR, NULL, tps80032_qb_store_attributes),
+ 	__ATTR(fake_temp, S_IWUSR, NULL, tps80032_fake_temp_store_attributes),
+ 	__ATTR(suspend_1_percent, S_IRUGO, tps80032_batt_show_attributes, NULL),
+-        __ATTR(fast_charge, S_IRUGO|S_IWUSR, fast_charge_show, fast_charge_store),
+-	};
++	__ATTR(fast_charge, S_IRUGO|S_IWUGO, fast_charge_show, fast_charge_store),
++};
+ 
+ static ssize_t tps80032_batt_show_attributes(struct device *dev,
+ 					struct device_attribute *attr,
