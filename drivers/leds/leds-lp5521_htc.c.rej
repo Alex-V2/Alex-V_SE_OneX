@@ -1,0 +1,11 @@
+--- drivers/leds/leds-lp5521_htc.c
++++ drivers/leds/leds-lp5521_htc.c
+@@ -766,7 +779,7 @@
+ 
+ static DEVICE_ATTR(behavior, 0644, led_behavior_show, led_behavior_set);
+ 
+-static void lp5521_led_birghtness_set(struct led_classdev *led_cdev,
++static void lp5521_led_brightness_set(struct led_classdev *led_cdev,
+ 			       enum led_brightness brightness)
+ {
+ 	struct i2c_client *client = private_lp5521_client;
