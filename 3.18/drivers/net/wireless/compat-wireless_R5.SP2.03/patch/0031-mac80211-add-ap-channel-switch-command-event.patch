@@ -1,0 +1,313 @@
+From 513eb7df0e8cd7886f9f4b0cc7741704aa84d911 Mon Sep 17 00:00:00 2001
+From: Victor Goldenshtein <victorg@ti.com>
+Date: Mon, 10 Oct 2011 14:55:43 +0200
+Subject: [PATCH 31/40] mac80211: add ap channel switch command/event
+
+Add ieee80211_ap_process_chanswitch(), to handle a channel switch
+request for AP.
+
+Add ieee80211_ap_ch_switch_done() which updates oper_channel
+and notifies upper layers about channel switch complete event.
+
+Signed-off-by: Victor Goldenshtein <victorg@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h      |   21 +++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/cfg.c          |   28 ++++++++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-ops.h   |   10 ++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h |   53 +++++++++++++++++++++++++++++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h  |    4 +++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/iface.c        |    4 +++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c         |    3 ++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c         |   42 ++++++++++++++++++++++++++++++++++
+ 8 files changed, 165 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
+index eefd521..5692451 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
+@@ -2241,6 +2241,8 @@ struct ieee80211_ops {
+ 	void (*flush)(struct ieee80211_hw *hw, bool drop);
+ 	void (*channel_switch)(struct ieee80211_hw *hw,
+ 			       struct ieee80211_channel_switch *ch_switch);
++	void (*ap_channel_switch)(struct ieee80211_hw *hw,
++				  struct ieee80211_ap_ch_switch *ap_ch_switch);
+ 	int (*napi_poll)(struct ieee80211_hw *hw, int budget);
+ 	int (*set_antenna)(struct ieee80211_hw *hw, u32 tx_ant, u32 rx_ant);
+ 	int (*get_antenna)(struct ieee80211_hw *hw, u32 *tx_ant, u32 *rx_ant);
+@@ -3467,6 +3469,25 @@ void ieee80211_req_channel_switch(struct ieee80211_vif *vif,
+ 				  struct ieee80211_channel *chan, gfp_t gfp);
+ 
+ /**
++ * ieee80211_ap_ch_switch_done_work - ap channel switch complete work.
++ *
++ * @work: the channel switch complete work
++ */
++void ieee80211_ap_ch_switch_done_work(struct work_struct *work);
++
++/**
++ * ieee80211_ap_ch_switch_done - inform and update a configured connection
++ * that channel switch is complete.
++ *
++ * @vif: &struct ieee80211_vif pointer from the add_interface callback.
++ * @new_channel: the new channel.
++ * @type: new channe ltype.
++ */
++void ieee80211_ap_ch_switch_done(struct ieee80211_vif *vif,
++				 struct ieee80211_channel *new_channel,
++				 enum nl80211_channel_type type);
++
++/**
+  * ieee80211_get_operstate - get the operstate of the vif
+  *
+  * @vif: &struct ieee80211_vif pointer from the add_interface callback.
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/cfg.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/cfg.c
+index 76a2cba..d45d96c 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/cfg.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/cfg.c
+@@ -2098,6 +2098,33 @@ ieee80211_offchan_tx_done(struct ieee80211_work *wk, struct sk_buff *skb)
+ 	return WORK_DONE_DESTROY;
+ }
+ 
++static int
++ieee80211_ap_process_chanswitch(struct wiphy *wiphy,
++				struct net_device *dev,
++				struct ieee80211_ap_ch_switch *ap_ch_switch)
++{
++	struct ieee80211_sub_if_data *sdata = IEEE80211_DEV_TO_SUB_IF(dev);
++	struct ieee80211_local *local = sdata->local;
++
++	if (!local->ops->channel_switch)
++		return -EOPNOTSUPP;
++
++	if (!ap_ch_switch || !ap_ch_switch->channel)
++		return -EINVAL;
++
++	if (local->ap_cs_channel)
++		return -EBUSY;
++
++	local->ap_cs_channel = ap_ch_switch->channel;
++	local->ap_cs_type = ap_ch_switch->channel_type;
++
++	ieee80211_stop_queues_by_reason(&local->hw,
++					IEEE80211_QUEUE_STOP_REASON_CH_SW);
++
++	drv_ap_channel_switch(local, ap_ch_switch);
++	return 0;
++}
++
+ static int ieee80211_mgmt_tx(struct wiphy *wiphy, struct net_device *dev,
+ 			     struct ieee80211_channel *chan, bool offchan,
+ 			     enum nl80211_channel_type channel_type,
+@@ -2825,4 +2852,5 @@ struct cfg80211_ops mac80211_config_ops = {
+ 	.get_channel = ieee80211_wiphy_get_channel,
+ 	.set_noack_map = ieee80211_set_noack_map,
+ 	.set_rx_filters = ieee80211_set_rx_filters,
++	.ap_channel_switch = ieee80211_ap_process_chanswitch,
+ };
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-ops.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-ops.h
+index f27e0b7..e3b409a 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-ops.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-ops.h
+@@ -634,6 +634,16 @@ static inline void drv_channel_switch(struct ieee80211_local *local,
+ 	trace_drv_return_void(local);
+ }
+ 
++static inline void
++drv_ap_channel_switch(struct ieee80211_local *local,
++		      struct ieee80211_ap_ch_switch *ap_ch_switch)
++{
++	might_sleep();
++
++	trace_drv_ap_channel_switch(local, ap_ch_switch);
++	local->ops->ap_channel_switch(&local->hw, ap_ch_switch);
++	trace_drv_return_void(local);
++}
+ 
+ static inline int drv_set_antenna(struct ieee80211_local *local,
+ 				  u32 tx_ant, u32 rx_ant)
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h
+index 22cb8b2..04c7453 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h
+@@ -898,6 +898,37 @@ TRACE_EVENT(drv_channel_switch,
+ 	)
+ );
+ 
++TRACE_EVENT(drv_ap_channel_switch,
++	TP_PROTO(struct ieee80211_local *local,
++		 struct ieee80211_ap_ch_switch *ap_ch_switch),
++
++	TP_ARGS(local, ap_ch_switch),
++
++	TP_STRUCT__entry(
++		LOCAL_ENTRY
++		__field(u64, timestamp)
++		__field(bool, block_tx)
++		__field(bool, post_switch_block_tx)
++		__field(u16, freq)
++		__field(u8, count)
++	),
++
++	TP_fast_assign(
++		LOCAL_ASSIGN;
++		__entry->timestamp = ap_ch_switch->timestamp;
++		__entry->block_tx = ap_ch_switch->block_tx;
++		__entry->post_switch_block_tx =
++			ap_ch_switch->post_switch_block_tx;
++		__entry->freq = ap_ch_switch->channel->center_freq;
++		__entry->count = ap_ch_switch->count;
++	),
++
++	TP_printk(
++		LOCAL_PR_FMT " new freq:%u count:%d",
++		LOCAL_PR_ARG, __entry->freq, __entry->count
++	)
++);
++
+ TRACE_EVENT(drv_set_antenna,
+ 	TP_PROTO(struct ieee80211_local *local, u32 tx_ant, u32 rx_ant, int ret),
+ 
+@@ -1358,6 +1389,28 @@ TRACE_EVENT(api_cqm_rssi_notify,
+ 	)
+ );
+ 
++TRACE_EVENT(api_ap_ch_switch_done,
++	TP_PROTO(struct ieee80211_sub_if_data *sdata,
++		 u16 center_freq),
++
++	TP_ARGS(sdata, center_freq),
++
++	TP_STRUCT__entry(
++		VIF_ENTRY
++		__field(u16, center_freq)
++	),
++
++	TP_fast_assign(
++		VIF_ASSIGN;
++		__entry->center_freq = center_freq;
++	),
++
++	TP_printk(
++		VIF_PR_FMT " switched to new freq:%d",
++		VIF_PR_ARG, __entry->center_freq
++	)
++)
++
+ TRACE_EVENT(api_req_channel_switch,
+ 	TP_PROTO(struct ieee80211_sub_if_data *sdata,
+ 		 u16 center_freq),
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h
+index 22b96ac..e7755be 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h
+@@ -258,6 +258,7 @@ struct ieee80211_if_ap {
+ 	atomic_t num_sta_authorized; /* number of authorized stations */
+ 	int dtim_count;
+ 	bool dtim_bc_mc;
++	struct work_struct ap_ch_sw_work;
+ };
+ 
+ struct ieee80211_if_wds {
+@@ -712,6 +713,7 @@ enum queue_stop_reason {
+ 	IEEE80211_QUEUE_STOP_REASON_SUSPEND,
+ 	IEEE80211_QUEUE_STOP_REASON_SKB_ADD,
+ 	IEEE80211_QUEUE_STOP_REASON_CHTYPE_CHANGE,
++	IEEE80211_QUEUE_STOP_REASON_CH_SW,
+ };
+ 
+ #ifdef CONFIG_MAC80211_LEDS
+@@ -931,6 +933,8 @@ struct ieee80211_local {
+ 	struct ieee80211_sub_if_data *scan_sdata;
+ 	enum nl80211_channel_type _oper_channel_type;
+ 	struct ieee80211_channel *oper_channel, *csa_channel;
++	struct ieee80211_channel *ap_cs_channel;
++	enum nl80211_channel_type ap_cs_type;
+ 
+ 	/* Temporary remain-on-channel for off-channel operations */
+ 	struct ieee80211_channel *tmp_channel;
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/iface.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/iface.c
+index 632bf81..defc136 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/iface.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/iface.c
+@@ -868,10 +868,14 @@ static void ieee80211_setup_sdata(struct ieee80211_sub_if_data *sdata,
+ 		type = NL80211_IFTYPE_AP;
+ 		sdata->vif.type = type;
+ 		sdata->vif.p2p = true;
++		INIT_WORK(&sdata->u.ap.ap_ch_sw_work,
++			ieee80211_ap_ch_switch_done_work);
+ 		/* fall through */
+ 	case NL80211_IFTYPE_AP:
+ 		skb_queue_head_init(&sdata->u.ap.ps_bc_buf);
+ 		INIT_LIST_HEAD(&sdata->u.ap.vlans);
++		INIT_WORK(&sdata->u.ap.ap_ch_sw_work,
++			ieee80211_ap_ch_switch_done_work);
+ 		break;
+ 	case NL80211_IFTYPE_P2P_CLIENT:
+ 		type = NL80211_IFTYPE_STATION;
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c
+index e0b4427..ccd7b31 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c
+@@ -577,6 +577,9 @@ struct ieee80211_hw *ieee80211_alloc_hw(size_t priv_data_len,
+ 	wiphy->features = NL80211_FEATURE_SK_TX_STATUS |
+ 			  NL80211_FEATURE_HT_IBSS;
+ 
++	if (ops->ap_channel_switch)
++		wiphy->features |= NL80211_FEATURE_AP_CH_SWITCH;
++
+ 	if (!ops->set_key)
+ 		wiphy->flags |= WIPHY_FLAG_IBSS_RSN;
+ 
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
+index 71af375..06aed92 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
+@@ -2950,3 +2950,45 @@ void ieee80211_req_channel_switch(struct ieee80211_vif *vif,
+ 	cfg80211_req_channel_switch(sdata->dev, chan, gfp);
+ }
+ EXPORT_SYMBOL(ieee80211_req_channel_switch);
++
++void ieee80211_ap_ch_switch_done_work(struct work_struct *work)
++{
++	struct ieee80211_sub_if_data *sdata =
++		container_of(work, struct ieee80211_sub_if_data,
++			     u.ap.ap_ch_sw_work);
++	struct ieee80211_local *local = sdata->local;
++
++	/* update the device channel directly */
++	mutex_lock(&local->mtx);
++	if (local->ap_cs_channel) {
++		local->oper_channel =
++			local->hw.conf.channel = local->ap_cs_channel;
++		local->_oper_channel_type =  local->ap_cs_type;
++		local->ap_cs_channel = NULL;
++	}
++
++	ieee80211_wake_queues_by_reason(&local->hw,
++					IEEE80211_QUEUE_STOP_REASON_CH_SW);
++	mutex_unlock(&local->mtx);
++
++	cfg80211_ch_switch_notify(sdata->dev, local->oper_channel->center_freq,
++				  local->_oper_channel_type);
++}
++
++void ieee80211_ap_ch_switch_done(struct ieee80211_vif *vif,
++				 struct ieee80211_channel *new_channel,
++				 enum nl80211_channel_type type)
++{
++	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
++	struct ieee80211_local *local = sdata->local;
++
++	if (WARN_ON(sdata->vif.type != NL80211_IFTYPE_AP))
++		return;
++
++	if (WARN_ON(local->ap_cs_channel != new_channel))
++		return;
++
++	trace_api_ap_ch_switch_done(sdata, new_channel->center_freq);
++	schedule_work(&sdata->u.ap.ap_ch_sw_work);
++}
++EXPORT_SYMBOL(ieee80211_ap_ch_switch_done);
+-- 
+1.7.0.4
+

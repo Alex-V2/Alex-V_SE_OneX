@@ -1,0 +1,55 @@
+From de9da3354d0932f1b7ae2139d386f5e10b0c7454 Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Sun, 5 Aug 2012 19:51:43 +0300
+Subject: [PATCH 09/16] mac80211: mark the p2p0 interface with a special flag
+
+This flag indicates the lower driver the interface will be used for
+p2p management operations only (p2p find). This will be superseded
+by pending upstream patches making p2p a wdev-only interface.
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ include/net/mac80211.h |    4 ++++
+ net/mac80211/iface.c   |    4 ++++
+ 2 files changed, 8 insertions(+), 0 deletions(-)
+
+diff --git a/include/net/mac80211.h b/include/net/mac80211.h
+index 025e85f..0822802 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
+@@ -863,6 +863,7 @@ struct ieee80211_channel_switch {
+  * @addr: address of this interface
+  * @p2p: indicates whether this AP or STA interface is a p2p
+  *	interface, i.e. a GO or p2p-sta respectively
++ * @dummy_p2p: dummy p2p interface - not used for data
+  * @drv_priv: data area for driver use, will always be aligned to
+  *	sizeof(void *).
+  */
+@@ -871,6 +872,9 @@ struct ieee80211_vif {
+ 	struct ieee80211_bss_conf bss_conf;
+ 	u8 addr[ETH_ALEN];
+ 	bool p2p;
++
++	bool dummy_p2p;
++
+ 	/* must be last */
+ 	u8 drv_priv[0] __attribute__((__aligned__(sizeof(void *))));
+ };
+diff --git a/net/mac80211/iface.c b/net/mac80211/iface.c
+index e91af00..6b51f8b 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/iface.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/iface.c
+@@ -1163,6 +1163,10 @@ int ieee80211_if_add(struct ieee80211_local *local, const char *name,
+ 	memcpy(sdata->vif.addr, ndev->dev_addr, ETH_ALEN);
+ 	memcpy(sdata->name, ndev->name, IFNAMSIZ);
+ 
++	/* hack for android */
++	if (0 == strcmp(sdata->name, "p2p0"))
++		sdata->vif.dummy_p2p = true;
++
+ 	/* initialise type-independent data */
+ 	sdata->wdev.wiphy = local->hw.wiphy;
+ 	sdata->local = local;
+-- 
+1.7.1
+

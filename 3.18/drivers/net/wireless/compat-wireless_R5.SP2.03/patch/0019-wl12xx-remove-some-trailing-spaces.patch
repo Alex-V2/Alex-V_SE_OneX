@@ -1,0 +1,41 @@
+From 3788f69c7ac55db9ba89f64f2df2fba4ad3c9e66 Mon Sep 17 00:00:00 2001
+From: Yair Shapira <yair.shapira@ti.com>
+Date: Sun, 9 Sep 2012 22:40:56 +0300
+Subject: [PATCH 19/40] wl12xx: remove some trailing spaces
+
+Signed-off-by: Yair Shapira <yair.shapira@ti.com>
+Signed-off-by: Igal Chernobelsky <igalc@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c |    2 +-
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c    |    2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
+index dea5169..08f5c1c 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
+@@ -354,7 +354,7 @@ static ssize_t dynamic_ps_timeout_write(struct file *file,
+ 		wl1271_warning("dyanmic_ps_timeout is not in valid range");
+ 		return -ERANGE;
+ 	}
+-	
++
+ 	mutex_lock(&wl->mutex);
+ 
+ 	wl->conf.conn.dynamic_ps_timeout = value;
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index e5b0d85..7965980 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -2298,7 +2298,7 @@ static int wl1271_op_suspend(struct ieee80211_hw *hw,
+ 	wl12xx_for_each_wlvif(wl, wlvif) {
+ 		ret = wl1271_configure_suspend(wl, wlvif, wow);
+ 		if (ret < 0) {
+-			mutex_unlock(&wl->mutex);			
++			mutex_unlock(&wl->mutex);
+ 			wl1271_warning("couldn't prepare device to suspend");
+ 			return ret;
+ 		}
+-- 
+1.7.0.4
+

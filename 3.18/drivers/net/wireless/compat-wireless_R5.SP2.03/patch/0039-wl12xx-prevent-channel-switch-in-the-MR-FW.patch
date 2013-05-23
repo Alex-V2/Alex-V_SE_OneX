@@ -1,0 +1,43 @@
+From 0e31b1bc00a887107bc1c5f0416c10e6556d8a81 Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Thu, 13 Sep 2012 14:32:55 +0300
+Subject: [PATCH 39/40] wl12xx: prevent channel switch in the MR FW
+
+When a channel switch request arrives and we are in the MR FW, drop the
+connection, as the FW command is unsupported. This will hopefully cause
+the STA to reconnect on the new channel.
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c |   15 +++++++++++++++
+ 1 files changed, 15 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index 1bd0259..d636bf0 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -5535,6 +5535,21 @@ static void wl12xx_op_channel_switch(struct ieee80211_hw *hw,
+ 		goto out;
+ 	}
+ 
++	/*
++	 * Channel switch command for STA/P2P-CL is not supported in MR FW.
++	 * Disconnect the STA to cause a reconnection on the second channel
++	 * which will also move the other role (AP).
++	 */
++	if (wl->fw_type == WL12XX_FW_TYPE_MULTI) {
++		wl1271_debug(DEBUG_MAC80211, "mac80211 dropping ch switch");
++		wl12xx_for_each_wlvif_sta(wl, wlvif) {
++			struct ieee80211_vif *vif = wl12xx_wlvif_to_vif(wlvif);
++			ieee80211_chswitch_done(vif, false);
++			ieee80211_connection_loss(vif);
++		}
++		goto out;
++	}
++
+ 	ret = wl1271_ps_elp_wakeup(wl);
+ 	if (ret < 0)
+ 		goto out;
+-- 
+1.7.0.4
+

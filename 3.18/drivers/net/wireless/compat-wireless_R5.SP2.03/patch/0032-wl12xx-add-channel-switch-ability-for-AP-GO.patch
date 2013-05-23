@@ -1,0 +1,210 @@
+From ac6e93f46b1cf0387a4150d66533fb69decc41af Mon Sep 17 00:00:00 2001
+From: Victor Goldenshtein <victorg@ti.com>
+Date: Mon, 10 Oct 2011 17:08:13 +0200
+Subject: [PATCH 32/40] wl12xx: add channel switch ability for AP & GO
+
+Add channel switch command and handle channel
+switch event.
+
+[Arik - added check for role id in the event of STA channel switch. This
+will prevent bogus calls to ieee80211_chswitch_done]
+
+Signed-off-by: Victor Goldenshtein <victorg@ti.com>
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c    |   23 ++++++++++++++-----
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h    |    4 ++-
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/event.c  |   26 +++++++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c   |   41 ++++++++++++++++++++++++++++++++-
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h |    3 ++
+ 5 files changed, 88 insertions(+), 9 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
+index 3c0208e..fe8d3e1 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
+@@ -1889,10 +1889,13 @@ out:
+ 
+ int wl12xx_cmd_channel_switch(struct wl1271 *wl,
+ 			      struct wl12xx_vif *wlvif,
+-			      struct ieee80211_channel_switch *ch_switch)
++			      struct ieee80211_channel *channel,
++			      u8 count, bool block_tx,
++			      bool post_switch_block_tx)
+ {
+ 	struct wl12xx_cmd_channel_switch *cmd;
+ 	int ret;
++	bool is_ap = (wlvif->bss_type == BSS_TYPE_AP_BSS);
+ 
+ 	wl1271_debug(DEBUG_ACX, "cmd channel switch");
+ 
+@@ -1902,13 +1905,21 @@ int wl12xx_cmd_channel_switch(struct wl1271 *wl,
+ 		goto out;
+ 	}
+ 
++	if (channel->flags & IEEE80211_CHAN_RADAR) {
++		wl1271_error("can't switch to radar channel,"
++			     "dfs not supported");
++		ret = -EINVAL;
++		goto out;
++	}
++
+ 	cmd->role_id = wlvif->role_id;
+-	cmd->channel = ch_switch->channel->hw_value;
+-	cmd->switch_time = ch_switch->count;
+-	cmd->stop_tx = ch_switch->block_tx;
++	cmd->channel = channel->hw_value;
++	cmd->switch_time = count;
++	cmd->stop_tx = block_tx;
++	cmd->post_switch_tx_disable = post_switch_block_tx;
+ 
+-	/* FIXME: control from mac80211 in the future */
+-	cmd->post_switch_tx_disable = 0;  /* Enable TX on the target channel */
++	if (is_ap)
++		wl->ch_sw_freq = channel->center_freq;
+ 
+ 	ret = wl1271_cmd_send(wl, CMD_CHANNEL_SWITCH, cmd, sizeof(*cmd), 0);
+ 	if (ret < 0) {
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+index b7c9f07..e79206b 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+@@ -91,7 +91,9 @@ int wl12xx_cmd_start_fwlog(struct wl1271 *wl);
+ int wl12xx_cmd_stop_fwlog(struct wl1271 *wl);
+ int wl12xx_cmd_channel_switch(struct wl1271 *wl,
+ 			      struct wl12xx_vif *wlvif,
+-			      struct ieee80211_channel_switch *ch_switch);
++			      struct ieee80211_channel *channel,
++			      u8 count, bool block_tx,
++			      bool post_switch_block_tx);
+ int wl12xx_cmd_stop_channel_switch(struct wl1271 *wl);
+ int wl12xx_cmd_generic_cfg(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ 			   u8 index, bool enable, u8 value);
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/event.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/event.c
+index c312a3f..81ef17b 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/event.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/event.c
+@@ -196,6 +196,10 @@ static int wl1271_event_process(struct wl1271 *wl, struct event_mailbox *mbox)
+ 			struct ieee80211_vif *vif = wl12xx_wlvif_to_vif(wlvif);
+ 			bool success;
+ 
++			/* make sure only the correct sta is moved */
++			if (mbox->channel_switch_role_id != wlvif->role_id)
++				continue;
++
+ 			if (!test_and_clear_bit(WLVIF_FLAG_CS_PROGRESS,
+ 						&wlvif->flags))
+ 				continue;
+@@ -203,6 +207,28 @@ static int wl1271_event_process(struct wl1271 *wl, struct event_mailbox *mbox)
+ 			success = mbox->channel_switch_status ? false : true;
+ 			ieee80211_chswitch_done(vif, success);
+ 		}
++
++		wl12xx_for_each_wlvif_ap(wl, wlvif) {
++			u16 freq = wl->ch_sw_freq;
++			struct ieee80211_channel *new_ch;
++			if (!freq)
++				break;
++
++			new_ch = ieee80211_get_channel(wl->hw->wiphy, freq);
++
++			if (mbox->channel_switch_role_id != wlvif->role_id)
++				continue;
++
++			wlvif->channel = ieee80211_frequency_to_channel(freq);
++			wl1271_debug(DEBUG_AP, "ap ch switch done, new_freq = "
++				     "%d, new_ch = %d", freq, wlvif->channel);
++			wl->ch_sw_freq = 0;
++
++			vif = wl12xx_wlvif_to_vif(wlvif);
++			ieee80211_ap_ch_switch_done(vif, new_ch,
++						    NL80211_CHAN_HT20);
++			break;
++		}
+ 	}
+ 
+ 	if ((vector & DUMMY_PACKET_EVENT_ID)) {
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index ea79cb0..250ff86 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -5512,7 +5512,7 @@ out:
+ }
+ 
+ static void wl12xx_op_channel_switch(struct ieee80211_hw *hw,
+-				     struct ieee80211_channel_switch *ch_switch)
++				     struct ieee80211_channel_switch *ch_sw)
+ {
+ 	struct wl1271 *wl = hw->priv;
+ 	struct wl12xx_vif *wlvif;
+@@ -5540,8 +5540,44 @@ static void wl12xx_op_channel_switch(struct ieee80211_hw *hw,
+ 
+ 	/* TODO: change mac80211 to pass vif as param */
+ 	wl12xx_for_each_wlvif_sta(wl, wlvif) {
+-		ret = wl12xx_cmd_channel_switch(wl, wlvif, ch_switch);
++		ret = wl12xx_cmd_channel_switch(wl, wlvif,
++						ch_sw->channel, ch_sw->count,
++						ch_sw->block_tx, false);
++		if (!ret)
++			set_bit(WLVIF_FLAG_CS_PROGRESS, &wlvif->flags);
++	}
++
++	wl1271_ps_elp_sleep(wl);
++
++out:
++	mutex_unlock(&wl->mutex);
++}
++
++static void wl12xx_op_ap_channel_switch(struct ieee80211_hw *hw,
++					struct ieee80211_ap_ch_switch *ap_ch_sw)
++{
++	struct wl1271 *wl = hw->priv;
++	struct wl12xx_vif *wlvif;
++	int ret;
++
++	wl1271_debug(DEBUG_MAC80211, "mac80211 ap channel switch");
++
++	wl1271_tx_flush(wl);
++
++	mutex_lock(&wl->mutex);
++
++	ret = wl1271_ps_elp_wakeup(wl);
++	if (ret < 0)
++		goto out;
+ 
++	wl12xx_for_each_wlvif_ap(wl, wlvif) {
++		wl1271_debug(DEBUG_MAC80211, "mac80211 sending "
++			     "channel switch cmd");
++		ret = wl12xx_cmd_channel_switch(wl, wlvif,
++					    ap_ch_sw->channel,
++					    ap_ch_sw->count,
++					    ap_ch_sw->block_tx,
++					    ap_ch_sw->post_switch_block_tx);
+ 		if (!ret)
+ 			set_bit(WLVIF_FLAG_CS_PROGRESS, &wlvif->flags);
+ 	}
+@@ -5829,6 +5865,7 @@ static const struct ieee80211_ops wl1271_ops = {
+ 	.tx_frames_pending = wl1271_tx_frames_pending,
+ 	.set_bitrate_mask = wl12xx_set_bitrate_mask,
+ 	.channel_switch = wl12xx_op_channel_switch,
++	.ap_channel_switch = wl12xx_op_ap_channel_switch,
+ 	.set_default_key_idx = wl1271_op_set_default_key_idx,
+ 	.get_current_rssi = wl1271_op_get_current_rssi,
+ 	.set_rx_filters = wl12xx_op_set_rx_filters,
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+index 999b4e1..d2b52ce 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+@@ -575,6 +575,9 @@ struct wl1271 {
+ 	/* RX Data filter rule status - enabled/disabled */
+ 	bool rx_data_filters_status[WL1271_MAX_RX_FILTERS];
+ 
++	/* AP-mode - the frequency driver switching to in AP/GO */
++	u16 ch_sw_freq;
++
+ 	bool watchdog_recovery;
+ 
+ 	/* work to fire when Tx is stuck */
+-- 
+1.7.0.4
+

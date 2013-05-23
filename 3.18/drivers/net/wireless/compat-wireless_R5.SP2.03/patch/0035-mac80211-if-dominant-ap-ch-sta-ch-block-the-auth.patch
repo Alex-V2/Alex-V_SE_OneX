@@ -1,0 +1,84 @@
+From 7013e6b30e5e7595e6e5b1329f72ac4599d4c844 Mon Sep 17 00:00:00 2001
+From: Victor Goldenshtein <victorg@ti.com>
+Date: Tue, 11 Sep 2012 17:25:58 +0300
+Subject: [PATCH 35/40] mac80211: if "dominant ap ch"!="sta ch" block the auth
+
+Add new IEEE80211_HW_AP_CH_IS_DOMINANT flag which blocks
+the authentication requests for the STA role if it's tries
+to authenticate on a different channel than the AP/GO channel.
+
+By default the STA channel is the dominant one (this flag is't
+set) and the AP/GO channel can follow the dominant role channel.
+
+Signed-off-by: Victor Goldenshtein <victorg@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h |    6 ++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c    |   21 +++++++++++++++++++++
+ 2 files changed, 27 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
+index 5692451..6c07b9e 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
+@@ -1153,6 +1153,11 @@ enum sta_notify_cmd {
+  *
+  * @IEEE80211_HW_SUPPORTS_IM_SCAN_EVENT: Hardware supports intemediate scan
+  *	event.
++ *
++ * @IEEE80211_HW_AP_CH_IS_DOMINANT: AP/GO channel is dominant, thus other roles
++ *	which has a different operational channel will be blocked.
++ *	By default the STA channel is the dominant one (this flag is't set) and
++ *	the AP/GO channel can follow the dominant role channel.
+  */
+ enum ieee80211_hw_flags {
+ 	IEEE80211_HW_HAS_RATE_CONTROL			= 1<<0,
+@@ -1183,6 +1188,7 @@ enum ieee80211_hw_flags {
+ 	IEEE80211_HW_SUPPORTS_IM_SCAN_EVENT		= 1<<25,
+ 	IEEE80211_HW_SCAN_WHILE_IDLE			= 1<<26,
+ 	IEEE80211_HW_SUPPORTS_RX_FILTERS                = 1<<27,
++	IEEE80211_HW_AP_CH_IS_DOMINANT			= 1<<28,
+ };
+ 
+ /**
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
+index 506f5d2..203669e 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
+@@ -2475,6 +2475,8 @@ int ieee80211_mgd_auth(struct ieee80211_sub_if_data *sdata,
+ 	const u8 *ssid;
+ 	struct ieee80211_work *wk;
+ 	u16 auth_alg;
++	struct ieee80211_local *local = sdata->local;
++	struct ieee80211_sub_if_data *ap_sdata = NULL, *tmp_sdata = NULL;
+ 
+ 	if (req->local_state_change)
+ 		return 0; /* no need to update mac80211 state */
+@@ -2501,6 +2503,25 @@ int ieee80211_mgd_auth(struct ieee80211_sub_if_data *sdata,
+ 		return -EOPNOTSUPP;
+ 	}
+ 
++	list_for_each_entry(tmp_sdata, &local->interfaces, list) {
++		if ((tmp_sdata->vif.type == NL80211_IFTYPE_AP) &&
++		    ieee80211_sdata_running(tmp_sdata) &&
++		    (tmp_sdata->vif.bss_conf.enable_beacon)) {
++			ap_sdata = tmp_sdata;
++			break;
++		}
++	}
++
++	if (ap_sdata &&
++	    (local->hw.flags & IEEE80211_HW_AP_CH_IS_DOMINANT) &&
++	    (local->oper_channel != req->bss->channel)) {
++		wiphy_debug(local->hw.wiphy,
++			    "%s: Can't authenticate with %pM on ch %d.\n",
++			    sdata->name, req->bss->bssid,
++			    req->bss->channel->hw_value);
++		return -EOPNOTSUPP;
++	}
++
+ 	wk = kzalloc(sizeof(*wk) + req->ie_len, GFP_KERNEL);
+ 	if (!wk)
+ 		return -ENOMEM;
+-- 
+1.7.0.4
+

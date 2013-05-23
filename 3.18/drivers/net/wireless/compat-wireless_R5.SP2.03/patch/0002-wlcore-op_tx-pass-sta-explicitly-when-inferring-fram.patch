@@ -1,0 +1,89 @@
+From bc8f9d2a29e43a592d36d0ed1b991cfb7bec9266 Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Thu, 26 Jul 2012 21:22:11 +0300
+Subject: [PATCH 02/16] wlcore: op_tx: pass sta explicitly when inferring frame hlid
+
+avoid using the skb CB for getting the appropriate sta.
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ drivers/net/wireless/wl12xx/main.c |    2 +-
+ drivers/net/wireless/wl12xx/tx.c   |   15 ++++++---------
+ drivers/net/wireless/wl12xx/tx.h   |    4 +---
+ 3 files changed, 8 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/wl12xx/main.c
+index 0528d08..0c84098 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -1720,7 +1720,7 @@ static void wl1271_op_tx(struct ieee80211_hw *hw, struct sk_buff *skb)
+ 	mapping = skb_get_queue_mapping(skb);
+ 	q = wl1271_tx_get_queue(mapping);
+ 
+-	hlid = wl12xx_tx_get_hlid(wl, wlvif, skb);
++	hlid = wl12xx_tx_get_hlid(wl, wlvif, skb, info->control.sta);
+ 
+ 	spin_lock_irqsave(&wl->wl_lock, flags);
+ 
+diff --git a/drivers/net/wireless/wl12xx/tx.c b/drivers/net/wireless/wl12xx/tx.c
+index 3a65f1e..4c6cf14 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/tx.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/tx.c
+@@ -122,16 +122,13 @@ bool wl12xx_is_dummy_packet(struct wl1271 *wl, struct sk_buff *skb)
+ 	return wl->dummy_packet == skb;
+ }
+ 
+-u8 wl12xx_tx_get_hlid_ap(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+-			 struct sk_buff *skb)
++static u8 wl12xx_tx_get_hlid_ap(struct wl1271 *wl, struct wl12xx_vif *wlvif,
++				struct sk_buff *skb, struct ieee80211_sta *sta)
+ {
+-	struct ieee80211_tx_info *control = IEEE80211_SKB_CB(skb);
+-
+-	if (control->control.sta) {
++	if (sta) {
+ 		struct wl1271_station *wl_sta;
+ 
+-		wl_sta = (struct wl1271_station *)
+-				control->control.sta->drv_priv;
++		wl_sta = (struct wl1271_station *)sta->drv_priv;
+ 		return wl_sta->hlid;
+ 	} else {
+ 		struct ieee80211_hdr *hdr;
+@@ -148,7 +145,7 @@ u8 wl12xx_tx_get_hlid_ap(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ }
+ 
+ u8 wl12xx_tx_get_hlid(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+-		      struct sk_buff *skb)
++		      struct sk_buff *skb, struct ieee80211_sta *sta)
+ {
+ 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)skb->data;
+ 
+@@ -156,7 +153,7 @@ u8 wl12xx_tx_get_hlid(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ 		return wl->system_hlid;
+ 
+ 	if (wlvif->bss_type == BSS_TYPE_AP_BSS)
+-		return wl12xx_tx_get_hlid_ap(wl, wlvif, skb);
++		return wl12xx_tx_get_hlid_ap(wl, wlvif, skb, sta);
+ 
+ 	if ((test_bit(WLVIF_FLAG_STA_ASSOCIATED, &wlvif->flags) ||
+ 	     test_bit(WLVIF_FLAG_IBSS_JOINED, &wlvif->flags)) &&
+diff --git a/drivers/net/wireless/wl12xx/tx.h b/drivers/net/wireless/wl12xx/tx.h
+index 67bae09..a90ef8a 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/tx.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/tx.h
+@@ -223,10 +223,8 @@ u8 wl1271_rate_to_idx(int rate, enum ieee80211_band band);
+ u32 wl1271_tx_enabled_rates_get(struct wl1271 *wl, u32 rate_set,
+ 				enum ieee80211_band rate_band);
+ u32 wl1271_tx_min_rate_get(struct wl1271 *wl, u32 rate_set);
+-u8 wl12xx_tx_get_hlid_ap(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+-			 struct sk_buff *skb);
+ u8 wl12xx_tx_get_hlid(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+-		      struct sk_buff *skb);
++		      struct sk_buff *skb, struct ieee80211_sta *sta);
+ void wl1271_tx_reset_link_queues(struct wl1271 *wl, u8 hlid);
+ void wl1271_handle_tx_low_watermark(struct wl1271 *wl);
+ bool wl12xx_is_dummy_packet(struct wl1271 *wl, struct sk_buff *skb);
+-- 
+1.7.1
+

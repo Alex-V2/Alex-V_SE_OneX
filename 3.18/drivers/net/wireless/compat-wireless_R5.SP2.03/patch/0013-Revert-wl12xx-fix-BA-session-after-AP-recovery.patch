@@ -1,0 +1,266 @@
+From cd54faad4dbe130ac3a014ad0ca98e67a6659545 Mon Sep 17 00:00:00 2001
+From: Eyal Shapira <eyal@wizery.com>
+Date: Thu, 6 Sep 2012 11:12:49 +0300
+Subject: [PATCH 13/40] Revert "wl12xx: fix BA session after AP recovery"
+
+This reverts commit 5ec6973c0fd6f3d2744d174576beb2e7ad007e0b.
+which introduced a bug where the hlid allocated for the sta during
+reconfig wasn't saved in the ieee80211_sta which was passed
+from mac80211. Instead a copy of ieee80211_sta was created and
+maintained by wl12xx. This is wrong as mac80211 needs to be in
+sync with us. The result could be attempting to free the wrong
+hlid when mac80211 removes the sta among others. Fix this by
+avoiding the copy and instead keep the pending peers list by
+linking the driver private struct at the end of ieee80211_sta.
+
+Another bug existed in wl1271_bss_info_changed_ap() where when
+adding the peers the state was updated effectively only for the
+first peer.
+
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c   |  112 +++++++---------------------------
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h |   16 -----
+ 2 files changed, 22 insertions(+), 106 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index b68470a..85e9568 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -4430,25 +4430,6 @@ static void wl1271_bss_info_changed_ap(struct wl1271 *wl,
+ 		}
+ 	}
+ 
+-	if (!list_empty(&wl->peers_list) &&
+-	    test_bit(WLVIF_FLAG_AP_STARTED, &wlvif->flags)) {
+-		struct ap_peers *peer, *next;
+-		enum ieee80211_sta_state state = IEEE80211_STA_NONE;
+-
+-		list_for_each_entry_safe(peer, next, &wl->peers_list, list) {
+-			wl1271_op_sta_add_locked(peer->hw, peer->vif,
+-						 &peer->sta);
+-			while (state < peer->sta.state)
+-				wl12xx_update_sta_state(wl, &peer->sta,
+-							++state);
+-
+-			wl1271_debug(DEBUG_AP, "add sta %pM", peer->sta.addr);
+-			list_del(&peer->list);
+-			kfree(peer);
+-		}
+-	}
+-
+-
+ out:
+ 	return;
+ }
+@@ -5030,11 +5011,7 @@ void wl1271_free_sta(struct wl1271 *wl, struct wl12xx_vif *wlvif, u8 hlid)
+ 
+ 	clear_bit(hlid, wlvif->ap.sta_hlid_map);
+ 	memset(wl->links[hlid].addr, 0, ETH_ALEN);
+-
+-	/* mac will send DELBA after recovery */
+-	if (!test_bit(WL1271_FLAG_RECOVERY_IN_PROGRESS, &wl->flags))
+-		wl->links[hlid].ba_bitmap = 0;
+-
++	wl->links[hlid].ba_bitmap = 0;
+ 	__clear_bit(hlid, &wl->ap_ps_map);
+ 	__clear_bit(hlid, (unsigned long *)&wl->ap_fw_ps_map);
+ 	wl12xx_free_link(wl, wlvif, &hlid);
+@@ -5048,9 +5025,9 @@ void wl1271_free_sta(struct wl1271 *wl, struct wl12xx_vif *wlvif, u8 hlid)
+ 		wl12xx_rearm_tx_watchdog_locked(wl);
+ }
+ 
+-void wl12xx_update_sta_state(struct wl1271 *wl,
+-			     struct ieee80211_sta *sta,
+-			     enum ieee80211_sta_state state)
++static void wl12xx_update_sta_state(struct wl1271 *wl,
++				    struct ieee80211_sta *sta,
++				    enum ieee80211_sta_state state)
+ {
+ 	struct wl1271_station *wl_sta;
+ 	u8 hlid;
+@@ -5071,7 +5048,7 @@ void wl12xx_update_sta_state(struct wl1271 *wl,
+ 	}
+ }
+ 
+-int wl1271_op_sta_add_locked(struct ieee80211_hw *hw,
++static int wl1271_op_sta_add(struct ieee80211_hw *hw,
+ 			     struct ieee80211_vif *vif,
+ 			     struct ieee80211_sta *sta)
+ {
+@@ -5080,41 +5057,6 @@ int wl1271_op_sta_add_locked(struct ieee80211_hw *hw,
+ 	struct wl1271_station *wl_sta;
+ 	int ret = 0;
+ 	u8 hlid;
+-	struct ap_peers *new_peer;
+-
+-	if (!test_bit(WLVIF_FLAG_AP_STARTED, &wlvif->flags)) {
+-		new_peer = kzalloc(sizeof(struct ap_peers), GFP_KERNEL);
+-		memcpy(&new_peer->sta, sta, sizeof(struct ieee80211_sta));
+-		new_peer->hw = hw;
+-		new_peer->vif = vif;
+-		list_add(&new_peer->list, &wl->peers_list);
+-		wl1271_debug(DEBUG_AP, "add pending sta %pM to the list",
+-			     new_peer->sta.addr);
+-		goto out;
+-	}
+-
+-	ret = wl1271_allocate_sta(wl, wlvif, sta);
+-	if (ret < 0)
+-		goto out;
+-
+-	wl_sta = (struct wl1271_station *)sta->drv_priv;
+-	hlid = wl_sta->hlid;
+-
+-	ret = wl12xx_cmd_add_peer(wl, wlvif, sta, hlid);
+-	if (ret < 0)
+-		wl1271_free_sta(wl, wlvif, hlid);
+-
+-out:
+-	return ret;
+-}
+-
+-static int wl1271_op_sta_add(struct ieee80211_hw *hw,
+-			     struct ieee80211_vif *vif,
+-			     struct ieee80211_sta *sta)
+-{
+-	struct wl1271 *wl = hw->priv;
+-	struct wl12xx_vif *wlvif = wl12xx_vif_to_data(vif);
+-	int ret = 0;
+ 
+ 	mutex_lock(&wl->mutex);
+ 
+@@ -5126,14 +5068,24 @@ static int wl1271_op_sta_add(struct ieee80211_hw *hw,
+ 
+ 	wl1271_debug(DEBUG_MAC80211, "mac80211 add sta %d", (int)sta->aid);
+ 
+-	ret = wl1271_ps_elp_wakeup(wl);
++	ret = wl1271_allocate_sta(wl, wlvif, sta);
+ 	if (ret < 0)
+ 		goto out;
+ 
+-	ret = wl1271_op_sta_add_locked(hw, vif, sta);
++	wl_sta = (struct wl1271_station *)sta->drv_priv;
++	hlid = wl_sta->hlid;
++
++	ret = wl1271_ps_elp_wakeup(wl);
++	if (ret < 0)
++		goto out_free_sta;
++
++	ret = wl12xx_cmd_add_peer(wl, wlvif, sta, hlid);
+ 
+ 	wl1271_ps_elp_sleep(wl);
+ 
++out_free_sta:
++	if (ret < 0)
++		wl1271_free_sta(wl, wlvif, hlid);
+ out:
+ 	mutex_unlock(&wl->mutex);
+ 	return ret;
+@@ -5150,21 +5102,6 @@ static int wl1271_op_sta_remove(struct ieee80211_hw *hw,
+ 
+ 	mutex_lock(&wl->mutex);
+ 
+-	if (!list_empty(&wl->peers_list) &&
+-	    !test_bit(WLVIF_FLAG_AP_STARTED, &wlvif->flags)) {
+-		struct ap_peers *peer, *next;
+-		list_for_each_entry_safe(peer, next, &wl->peers_list, list) {
+-			if (compare_ether_addr(sta->addr, peer->sta.addr))
+-				continue;
+-
+-			wl1271_debug(DEBUG_AP, "remove pending sta %pM from the"
+-				     " list", peer->sta.addr);
+-			list_del(&peer->list);
+-			kfree(peer);
+-		}
+-		goto out;
+-	}
+-
+ 	if (unlikely(wl->state != WLCORE_STATE_ON))
+ 		goto out;
+ 
+@@ -5196,18 +5133,15 @@ out:
+ 	return ret;
+ }
+ 
+-void wl12xx_op_sta_state(struct ieee80211_hw *hw,
+-			 struct ieee80211_vif *vif,
+-			 struct ieee80211_sta *sta,
+-			 enum ieee80211_sta_state state)
++static void wl12xx_op_sta_state(struct ieee80211_hw *hw,
++				struct ieee80211_vif *vif,
++				struct ieee80211_sta *sta,
++				enum ieee80211_sta_state state)
+ {
+ 	struct wl1271 *wl = hw->priv;
+ 	struct wl12xx_vif *wlvif = wl12xx_vif_to_data(vif);
+ 	int ret;
+ 
+-	if (!test_bit(WLVIF_FLAG_AP_STARTED, &wlvif->flags))
+-		return;
+-
+ 	wl1271_debug(DEBUG_MAC80211, "mac80211 sta %d state=%d",
+ 		     sta->aid, state);
+ 
+@@ -5316,8 +5250,7 @@ static int wl1271_op_ampdu_action(struct ieee80211_hw *hw,
+ 							 hlid);
+ 		if (!ret) {
+ 			*ba_bitmap &= ~BIT(tid);
+-			if (wl->ba_rx_session_count > 0)
+-				wl->ba_rx_session_count--;
++			wl->ba_rx_session_count--;
+ 		}
+ 		break;
+ 
+@@ -6224,7 +6157,6 @@ static struct ieee80211_hw *wl1271_alloc_hw(void)
+ 
+ 	INIT_LIST_HEAD(&wl->list);
+ 	INIT_LIST_HEAD(&wl->wlvif_list);
+-	INIT_LIST_HEAD(&wl->peers_list);
+ 
+ 	wl->hw = hw;
+ 
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+index d816bbb..fdc82e0 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+@@ -302,13 +302,6 @@ struct wl1271_link {
+ 	u8 ba_bitmap;
+ };
+ 
+-struct ap_peers {
+-	struct list_head list;
+-	struct ieee80211_sta sta;
+-	struct ieee80211_vif *vif;
+-	struct ieee80211_hw *hw;
+-};
+-
+ #define WL1271_MAX_RX_FILTERS 7
+ #define WL1271_RX_FILTER_MAX_FIELDS 8
+ 
+@@ -567,9 +560,6 @@ struct wl1271 {
+ 	/* RX Data filter rule status - enabled/disabled */
+ 	bool rx_data_filters_status[WL1271_MAX_RX_FILTERS];
+ 
+-	/* AP's peers */
+-	struct list_head peers_list;
+-
+ 	bool watchdog_recovery;
+ 
+ 	/* work to fire when Tx is stuck */
+@@ -748,12 +738,6 @@ struct wl12xx_rx_data_filter *wl1271_rx_filter_alloc(void);
+ int wl1271_rx_filter_get_fields_size(struct wl12xx_rx_data_filter *filter);
+ void wl1271_rx_filter_flatten_fields(struct wl12xx_rx_data_filter *filter,
+ 				     u8 *buf);
+-int wl1271_op_sta_add_locked(struct ieee80211_hw *hw,
+-			     struct ieee80211_vif *vif,
+-			     struct ieee80211_sta *sta);
+-void wl12xx_update_sta_state(struct wl1271 *wl,
+-			     struct ieee80211_sta *sta,
+-			     enum ieee80211_sta_state state);
+ int wl12xx_init_pll_clock(struct wl1271 *wl, int *selected_clock);
+ bool wl12xx_change_fw_if_needed(struct wl1271 *wl);
+ bool is_p2p_mgmt_on_existing_chan(struct wl1271 *wl);
+-- 
+1.7.0.4
+

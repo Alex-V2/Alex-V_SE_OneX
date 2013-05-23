@@ -1,0 +1,182 @@
+From d822d6f74a1ed7a5e8917514acfd1942116db7ba Mon Sep 17 00:00:00 2001
+From: Yair Shapira <yair.shapira@ti.com>
+Date: Thu, 13 Sep 2012 11:46:13 +0300
+Subject: [PATCH 23/40] wl12xx: fwlog changes and dynamic mem_block
+
+fwlog changes (i.e. setting it to on-demand+host by default)
+were merged from R8 branch.
+
+In addition, number of fwlog mem_blocks can now be changed
+using module param.
+
+Signed-off-by: Yair Shapira <yair.shapira@ti.com>
+Signed-off-by: Igal Chernobelsky <igalc@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h |    5 ++-
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c |   60 +++++++++++++++++++++++++++--------
+ 2 files changed, 50 insertions(+), 15 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h
+index e6fb1f8..c718867 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h
+@@ -1267,6 +1267,9 @@ struct conf_rx_streaming_settings {
+ 	u8 always;
+ };
+ 
++#define CONF_FWLOG_MIN_MEM_BLOCKS 	2
++#define CONF_FWLOG_MAX_MEM_BLOCKS	16
++
+ struct conf_fwlog {
+ 	/* Continuous or on-demand */
+ 	u8 mode;
+@@ -1274,7 +1277,7 @@ struct conf_fwlog {
+ 	/*
+ 	 * Number of memory blocks dedicated for the FW logger
+ 	 *
+-	 * Range: 1-3, or 0 to disable the FW logger
++	 * Range: 2-16, or 0 to disable the FW logger
+ 	 */
+ 	u8 mem_blocks;
+ 
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index 8c108fd..28e61c3 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -358,11 +358,11 @@ static struct conf_drv_settings default_conf = {
+ 		.always                        = 0,
+ 	},
+ 	.fwlog = {
+-		.mode                         = WL12XX_FWLOG_CONTINUOUS,
++		.mode                         = WL12XX_FWLOG_ON_DEMAND,
+ 		.mem_blocks                   = 2,
+ 		.severity                     = 0,
+ 		.timestamp                    = WL12XX_FWLOG_TIMESTAMP_DISABLED,
+-		.output                       = WL12XX_FWLOG_OUTPUT_DBG_PINS,
++		.output                       = WL12XX_FWLOG_OUTPUT_HOST,
+ 		.threshold                    = 0,
+ 	},
+ 	.core_dump = {
+@@ -446,6 +446,8 @@ static struct conf_drv_settings default_conf = {
+ };
+ 
+ static char *fwlog_param;
++static int fwlog_mem_blocks = -1;
++
+ static bool core_dump_enabled = WL12XX_CORE_DUMP_ENABLED;
+ static bool bug_on_recovery;
+ static char *fref_param;
+@@ -818,6 +820,19 @@ static void wl1271_conf_init(struct wl1271 *wl)
+ 	memcpy(&wl->conf, &default_conf, sizeof(default_conf));
+ 
+ 	/* Adjust settings according to optional module parameters */
++
++	/* Firmware Logger params */
++	if (fwlog_mem_blocks != -1) {
++		if (fwlog_mem_blocks >= CONF_FWLOG_MIN_MEM_BLOCKS &&
++		    fwlog_mem_blocks <= CONF_FWLOG_MAX_MEM_BLOCKS) {
++			wl->conf.fwlog.mem_blocks = fwlog_mem_blocks;
++		} else {
++			wl1271_error(
++				"Illegal fwlog_mem_blocks=%d using default %d",
++				fwlog_mem_blocks, wl->conf.fwlog.mem_blocks);
++		}
++	}
++
+ 	if (fwlog_param) {
+ 		if (!strcmp(fwlog_param, "continuous")) {
+ 			wl->conf.fwlog.mode = WL12XX_FWLOG_CONTINUOUS;
+@@ -1431,15 +1446,17 @@ size_t wl12xx_copy_fwlog(struct wl1271 *wl, u8 *memblock, size_t maxlen)
+ 	return len;
+ }
+ 
++#define WL12XX_FW_LOG_END 0x2000000
++
+ static void wl12xx_read_fwlog_panic(struct wl1271 *wl)
+ {
+ 	u32 addr;
+-	u32 first_addr;
++	u32 offset;
++	u32 end_of_log;
+ 	u8 *block;
+ 	int ret;
+ 
+ 	if ((wl->quirks & WL12XX_QUIRK_FWLOG_NOT_IMPLEMENTED) ||
+-	    (wl->conf.fwlog.mode != WL12XX_FWLOG_ON_DEMAND) ||
+ 	    (wl->conf.fwlog.mem_blocks == 0))
+ 		return;
+ 
+@@ -1449,8 +1466,12 @@ static void wl12xx_read_fwlog_panic(struct wl1271 *wl)
+ 	if (!block)
+ 		return;
+ 
+-	/* Do not send a stop fwlog command if the fw is hanged */
+-	if (!wl->watchdog_recovery)
++	/*
++	 * Do not send a stop fwlog command if the fw is hanged or if
++	 * dbgpins are used (due to some fw bug).
++	 */
++	if (!wl->watchdog_recovery &&
++	    wl->conf.fwlog.output != WL12XX_FWLOG_OUTPUT_DBG_PINS)
+ 		wl12xx_cmd_stop_fwlog(wl);
+ 
+ 	/* Read the first memory block address */
+@@ -1458,12 +1479,19 @@ static void wl12xx_read_fwlog_panic(struct wl1271 *wl)
+ 	if (ret < 0)
+ 		goto out;
+ 
+-	first_addr = le32_to_cpu(wl->fw_status->log_start_addr);
+-	if (!first_addr)
++	addr = le32_to_cpu(wl->fw_status->log_start_addr);
++	if (!addr)
+ 		goto out;
+ 
++	if (wl->conf.fwlog.mode == WL12XX_FWLOG_CONTINUOUS) {
++		offset = sizeof(addr) + sizeof(struct wl1271_rx_descriptor);
++		end_of_log = WL12XX_FW_LOG_END;
++	} else {
++		offset = sizeof(addr);
++		end_of_log = addr;
++	}
++
+ 	/* Traverse the memory blocks linked list */
+-	addr = first_addr;
+ 	do {
+ 		memset(block, 0, WL12XX_HW_BLOCK_SIZE);
+ 		ret = wl1271_read_hwaddr(wl, addr, block, WL12XX_HW_BLOCK_SIZE,
+@@ -1474,13 +1502,14 @@ static void wl12xx_read_fwlog_panic(struct wl1271 *wl)
+ 		/*
+ 		 * Memory blocks are linked to one another. The first 4 bytes
+ 		 * of each memory block hold the hardware address of the next
+-		 * one. The last memory block points to the first one.
++		 * one. The last memory block points to the first one in
++		 * on demand mode and is equal to 0x2000000 in continuous mode.
+ 		 */
+ 		addr = le32_to_cpup((__le32 *)block);
+-		if (!wl12xx_copy_fwlog(wl, block + sizeof(addr),
+-				       WL12XX_HW_BLOCK_SIZE - sizeof(addr)))
++		if (!wl12xx_copy_fwlog(wl, block + offset,
++				       WL12XX_HW_BLOCK_SIZE - offset))
+ 			break;
+-	} while (addr && (addr != first_addr));
++	} while (addr && (addr != end_of_log));
+ 
+ 	wake_up_interruptible(&wl->fwlog_waitq);
+ 
+@@ -6896,9 +6925,12 @@ module_param_named(debug_level, wl12xx_debug_level, uint, S_IRUSR | S_IWUSR);
+ MODULE_PARM_DESC(debug_level, "wl12xx debugging level");
+ 
+ module_param_named(fwlog, fwlog_param, charp, 0);
+-MODULE_PARM_DESC(keymap,
++MODULE_PARM_DESC(fwlog,
+ 		 "FW logger options: continuous, ondemand, dbgpins or disable");
+ 
++module_param(fwlog_mem_blocks, int, S_IRUSR | S_IWUSR);
++MODULE_PARM_DESC(fwlog_mem_blocks, "fwlog mem_blocks");
++
+ module_param_named(core_dump, core_dump_enabled, bool, S_IRUSR | S_IWUSR);
+ MODULE_PARM_DESC(core_dump, "Core Dump: 0-disable, 1-enable");
+ 
+-- 
+1.7.0.4
+

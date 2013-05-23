@@ -1,0 +1,45 @@
+From f24a96f4e64bd9fcd96761e6fb06e886c5a4ff6f Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Thu, 9 Aug 2012 02:25:32 +0300
+Subject: [PATCH 03/16] wlcore: make debug prints work without dynamic debug
+
+Make debug prints operational when dynamic debug is not defined.
+This allows better debugging in production environments.
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/wl12xx/debug.h |   14 ++++++++++++--
+ 1 files changed, 12 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/wl12xx/debug.h b/drivers/net/wireless/wl12xx/debug.h
+index ec0fdc2..924e26c 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debug.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debug.h
+@@ -72,11 +72,21 @@ extern u32 wl12xx_debug_level;
+ #define wl1271_info(fmt, arg...) \
+ 	pr_info(DRIVER_PREFIX fmt "\n", ##arg)
+ 
++/* define the debug macro differently if dynamic debug is supported */
++#if defined(CONFIG_DYNAMIC_DEBUG)
+ #define wl1271_debug(level, fmt, arg...) \
+ 	do { \
+-		if (level & wl12xx_debug_level) \
+-			pr_debug(DRIVER_PREFIX fmt "\n", ##arg); \
++		if (unlikely(level & wl12xx_debug_level)) \
++			dynamic_pr_debug(DRIVER_PREFIX fmt "\n", ##arg); \
++	} while (0)
++#else
++#define wl1271_debug(level, fmt, arg...) \
++	do { \
++		if (unlikely(level & wl12xx_debug_level)) \
++			printk(KERN_DEBUG pr_fmt(DRIVER_PREFIX fmt "\n"), \
++			       ##arg); \
+ 	} while (0)
++#endif
+ 
+ /* TODO: use pr_debug_hex_dump when it becomes available */
+ #define wl1271_dump(level, prefix, buf, len)	\
+-- 
+1.7.1
+

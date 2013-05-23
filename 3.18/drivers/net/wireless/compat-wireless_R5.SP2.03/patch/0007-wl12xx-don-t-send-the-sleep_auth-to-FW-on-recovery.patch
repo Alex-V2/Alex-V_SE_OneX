@@ -1,0 +1,33 @@
+From 54b5f36131a10b8553677d05b29cae13c9fe9098 Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Sun, 2 Sep 2012 13:34:54 +0300
+Subject: [PATCH 07/16] wl12xx: don't send the sleep_auth to FW on recovery
+
+The FW doesn't seem to handle it gracefully, and it's redundant since
+recovery will make us load a new FW anyway.
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ drivers/net/wireless/wl12xx/main.c |    5 ++---
+ 1 files changed, 2 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/wl12xx/main.c
+index 80686b6..e4d3f8f 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -2972,10 +2972,9 @@ deinit:
+ 
+ 	/*
+ 	 * Last AP, have more stations. Configure sleep auth according to STA.
+-	 * Don't do this on unintended recovery.
++	 * Don't do this on recovery - everything will be restarted anyway.
+ 	 */
+-	if (test_bit(WL1271_FLAG_RECOVERY_IN_PROGRESS, &wl->flags) &&
+-	    !test_bit(WL1271_FLAG_INTENDED_FW_RECOVERY, &wl->flags))
++	if (test_bit(WL1271_FLAG_RECOVERY_IN_PROGRESS, &wl->flags))
+ 		goto unlock;
+ 
+ 	if (wl->ap_count == 0 && wlvif->bss_type == BSS_TYPE_AP_BSS
+-- 
+1.7.1
+

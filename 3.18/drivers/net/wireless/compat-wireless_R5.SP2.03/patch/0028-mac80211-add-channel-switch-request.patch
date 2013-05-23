@@ -1,0 +1,88 @@
+From 824fecef70c79bc1712307fc3a830c567e42ba43 Mon Sep 17 00:00:00 2001
+From: Victor Goldenshtein <victorg@ti.com>
+Date: Tue, 4 Oct 2011 14:21:04 +0200
+Subject: [PATCH 28/40] mac80211: add channel switch request
+
+Signed-off-by: Victor Goldenshtein <victorg@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h      |   10 ++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h |   22 ++++++++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c         |   11 +++++++++++
+ 3 files changed, 43 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
+index 0822802..eefd521 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/mac80211.h
+@@ -3457,6 +3457,16 @@ void ieee80211_cqm_rssi_notify(struct ieee80211_vif *vif,
+ 			       gfp_t gfp);
+ 
+ /**
++ * ieee80211_req_channel_switch - req a channel switch from usermode.
++ *
++ * @vif: &struct ieee80211_vif pointer from the add_interface callback.
++ * @chan: the desired channel.
++ * @gfp: context flags.
++ */
++void ieee80211_req_channel_switch(struct ieee80211_vif *vif,
++				  struct ieee80211_channel *chan, gfp_t gfp);
++
++/**
+  * ieee80211_get_operstate - get the operstate of the vif
+  *
+  * @vif: &struct ieee80211_vif pointer from the add_interface callback.
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h
+index 9416428..22cb8b2 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/driver-trace.h
+@@ -1358,6 +1358,28 @@ TRACE_EVENT(api_cqm_rssi_notify,
+ 	)
+ );
+ 
++TRACE_EVENT(api_req_channel_switch,
++	TP_PROTO(struct ieee80211_sub_if_data *sdata,
++		 u16 center_freq),
++
++	TP_ARGS(sdata, center_freq),
++
++	TP_STRUCT__entry(
++		VIF_ENTRY
++		__field(u16, center_freq)
++	),
++
++	TP_fast_assign(
++		VIF_ASSIGN;
++		__entry->center_freq = center_freq;
++	),
++
++	TP_printk(
++		VIF_PR_FMT " request to switch to freq %d",
++		VIF_PR_ARG, __entry->center_freq
++	)
++)
++
+ TRACE_EVENT(api_scan_completed,
+ 	TP_PROTO(struct ieee80211_local *local, bool aborted),
+ 
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
+index 2d20d35..71af375 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/mlme.c
+@@ -2939,3 +2939,14 @@ unsigned char ieee80211_get_operstate(struct ieee80211_vif *vif)
+ 	return sdata->dev->operstate;
+ }
+ EXPORT_SYMBOL(ieee80211_get_operstate);
++
++void ieee80211_req_channel_switch(struct ieee80211_vif *vif,
++				  struct ieee80211_channel *chan, gfp_t gfp)
++{
++	struct ieee80211_sub_if_data *sdata = vif_to_sdata(vif);
++
++	trace_api_req_channel_switch(sdata, chan->center_freq);
++
++	cfg80211_req_channel_switch(sdata->dev, chan, gfp);
++}
++EXPORT_SYMBOL(ieee80211_req_channel_switch);
+-- 
+1.7.0.4
+

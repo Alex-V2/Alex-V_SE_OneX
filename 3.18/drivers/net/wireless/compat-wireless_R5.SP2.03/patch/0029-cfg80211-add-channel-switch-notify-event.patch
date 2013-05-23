@@ -1,0 +1,141 @@
+From 9b124ddce15ff817569a7738c16dd10ec52b3611 Mon Sep 17 00:00:00 2001
+From: Thomas Pedersen <c_tpeder@qca.qualcomm.com>
+Date: Fri, 6 Apr 2012 13:35:47 -0700
+Subject: [PATCH 29/40] cfg80211: add channel switch notify event
+
+The firmware may decide to switch channels while already beaconing, e.g.
+in response to a cfg80211 connect request on a different vif. Add this
+event to notify userspace when an AP or GO interface has successfully
+migrated to a new channel, so it can update its configuration
+accordingly.
+
+Signed-off-by: Thomas Pedersen <c_tpeder@qca.qualcomm>
+Signed-off-by: John W. Linville <linville@tuxdriver>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/cfg80211.h |   11 +++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/mlme.c    |   27 +++++++++++++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c |   32 ++++++++++++++++++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.h |    4 ++++
+ 4 files changed, 74 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/cfg80211.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/cfg80211.h
+index 9ca027d..ff28f02 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/cfg80211.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/include/net/cfg80211.h
+@@ -3373,6 +3373,17 @@ int cfg80211_can_beacon_sec_chan(struct wiphy *wiphy,
+ 				 struct ieee80211_channel *chan,
+ 				 enum nl80211_channel_type channel_type);
+ 
++/*
++ * cfg80211_ch_switch_notify - update wdev channel and notify userspace
++ * @dev: the device which switched channels
++ * @freq: new channel frequency (in MHz)
++ * @type: channel type
++ *
++ * Acquires wdev_lock, so must only be called from sleepable driver context!
++ */
++void cfg80211_ch_switch_notify(struct net_device *dev, int freq,
++			       enum nl80211_channel_type type);
++
+ /* Logging, debugging and troubleshooting/diagnostic helpers. */
+ 
+ /* wiphy_printk helpers, similar to dev_printk */
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/mlme.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/mlme.c
+index a3735e9..b189cb7 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/mlme.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/mlme.c
+@@ -1143,6 +1143,33 @@ void cfg80211_pmksa_candidate_notify(struct net_device *dev, int index,
+ }
+ EXPORT_SYMBOL(cfg80211_pmksa_candidate_notify);
+ 
++void cfg80211_ch_switch_notify(struct net_device *dev, int freq,
++			       enum nl80211_channel_type type)
++{
++	struct wireless_dev *wdev = dev->ieee80211_ptr;
++	struct wiphy *wiphy = wdev->wiphy;
++	struct cfg80211_registered_device *rdev = wiphy_to_dev(wiphy);
++	struct ieee80211_channel *chan;
++
++	wdev_lock(wdev);
++
++	if (WARN_ON(wdev->iftype != NL80211_IFTYPE_AP &&
++		    wdev->iftype != NL80211_IFTYPE_P2P_GO))
++		goto out;
++
++	chan = rdev_freq_to_chan(rdev, freq, type);
++	if (WARN_ON(!chan))
++		goto out;
++
++	wdev->channel = chan;
++
++	nl80211_ch_switch_notify(rdev, dev, freq, type, GFP_KERNEL);
++out:
++	wdev_unlock(wdev);
++	return;
++}
++EXPORT_SYMBOL(cfg80211_ch_switch_notify);
++
+ bool cfg80211_rx_spurious_frame(struct net_device *dev,
+ 				const u8 *addr, gfp_t gfp)
+ {
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c
+index 9567d3a..0307559 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c
+@@ -7879,6 +7879,38 @@ void nl80211_pmksa_candidate_notify(struct cfg80211_registered_device *rdev,
+ 	nlmsg_free(msg);
+ }
+ 
++void nl80211_ch_switch_notify(struct cfg80211_registered_device *rdev,
++			      struct net_device *netdev, int freq,
++			      enum nl80211_channel_type type, gfp_t gfp)
++{
++	struct sk_buff *msg;
++	void *hdr;
++
++	msg = nlmsg_new(NLMSG_GOODSIZE, gfp);
++	if (!msg)
++		return;
++
++	hdr = nl80211hdr_put(msg, 0, 0, 0, NL80211_CMD_CH_SWITCH_NOTIFY);
++	if (!hdr) {
++		nlmsg_free(msg);
++		return;
++	}
++
++	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, netdev->ifindex);
++	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_FREQ, freq);
++	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY_CHANNEL_TYPE, type);
++
++	genlmsg_end(msg, hdr);
++
++	genlmsg_multicast_netns(wiphy_net(&rdev->wiphy), msg, 0,
++				nl80211_mlme_mcgrp.id, gfp);
++	return;
++
++ nla_put_failure:
++	genlmsg_cancel(msg, hdr);
++	nlmsg_free(msg);
++}
++
+ void
+ nl80211_send_cqm_pktloss_notify(struct cfg80211_registered_device *rdev,
+ 				struct net_device *netdev, const u8 *peer,
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.h
+index 5e489dd..1ce0f8b 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.h
+@@ -125,6 +125,10 @@ void nl80211_pmksa_candidate_notify(struct cfg80211_registered_device *rdev,
+ 				    struct net_device *netdev, int index,
+ 				    const u8 *bssid, bool preauth, gfp_t gfp);
+ 
++void nl80211_ch_switch_notify(struct cfg80211_registered_device *rdev,
++			      struct net_device *dev, int freq,
++			      enum nl80211_channel_type type, gfp_t gfp);
++
+ bool nl80211_unexpected_frame(struct net_device *dev,
+ 			      const u8 *addr, gfp_t gfp);
+ bool nl80211_unexpected_4addr_frame(struct net_device *dev,
+-- 
+1.7.0.4
+

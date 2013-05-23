@@ -1,0 +1,33 @@
+From 85d0c011de3ec116fb7db3a30cb2feeb08f6d685 Mon Sep 17 00:00:00 2001
+From: Yair Shapira <yair.shapira@ti.com>
+Date: Sun, 9 Sep 2012 22:40:54 +0300
+Subject: [PATCH 17/40] wl12xx: disable WARN_ON in case of FW watchdog recovery
+
+disable WARN_ON backtrace in case recovery was queued becasue of
+FW watchdog interrupt
+
+This allows faster recovery time becasue log to console is omitted
+
+Signed-off-by: Yair Shapira <yair.shapira@ti.com>
+Signed-off-by: Igal Chernobelsky <igalc@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c |    3 ++-
+ 1 files changed, 2 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index 85e9568..427306a 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -1342,7 +1342,8 @@ out:
+ 
+ void wl12xx_queue_recovery_work(struct wl1271 *wl)
+ {
+-	WARN_ON(!test_bit(WL1271_FLAG_INTENDED_FW_RECOVERY, &wl->flags));
++	WARN_ON(!test_bit(WL1271_FLAG_INTENDED_FW_RECOVERY, &wl->flags) &&
++		!wl->watchdog_recovery);
+ 
+ 	/* Avoid a recursive recovery */
+ 	if (wl->state == WLCORE_STATE_ON) {
+-- 
+1.7.0.4
+

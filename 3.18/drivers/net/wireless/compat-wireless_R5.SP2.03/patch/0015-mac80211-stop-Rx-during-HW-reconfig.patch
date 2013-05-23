@@ -1,0 +1,83 @@
+From f0c37768eb64da6a1fa9e1cba7128203dbeda19a Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Wed, 6 Jun 2012 11:25:02 +0300
+Subject: [PATCH 15/40] mac80211: stop Rx during HW reconfig
+
+While HW reconfig is in progress, drop all incoming Rx. This prevents
+incoming packets from changing the internal state of the driver or
+calling callbacks of the low level driver while it is in inconsistent
+state.
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+Signed-off-by: Johannes Berg <johannes.berg@intel.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h |    3 +++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c        |    7 +++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/rx.c          |    4 ++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c        |    3 +++
+ 4 files changed, 17 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h
+index 0542ff6..22b96ac 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/ieee80211_i.h
+@@ -842,6 +842,9 @@ struct ieee80211_local {
+ 	/* device is started */
+ 	bool started;
+ 
++	/* device is during a HW reconfig */
++	bool in_reconfig;
++
+ 	/* wowlan is enabled -- don't reconfig on resume */
+ 	bool wowlan;
+ 
+diff --git a/net/mac80211/main.c b/net/mac80211/main.c
+index 15025ba..e0b4427 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/main.c
+@@ -353,6 +353,13 @@ void ieee80211_restart_hw(struct ieee80211_hw *hw)
+ 	ieee80211_stop_queues_by_reason(hw,
+ 		IEEE80211_QUEUE_STOP_REASON_SUSPEND);
+ 
++	/*
++	 * Stop all Rx during the reconfig. We don't want state changes
++	 * or driver callbacks while this is in progress.
++	 */
++	local->in_reconfig = true;
++	barrier();
++
+ 	schedule_work(&local->restart_work);
+ }
+ EXPORT_SYMBOL(ieee80211_restart_hw);
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index d2b464d..6c50e44 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/rx.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/rx.c
+@@ -3064,6 +3064,10 @@ void ieee80211_rx(struct ieee80211_hw *hw, struct sk_buff *skb)
+ 	if (unlikely(local->quiescing || local->suspended))
+ 		goto drop;
+ 
++	/* We might be during a HW reconfig, prevent Rx for the same reason */
++	if (unlikely(local->in_reconfig))
++		goto drop;
++
+ 	/*
+ 	 * The same happens when we're not even started,
+ 	 * but that's worth a warning.
+diff --git a/net/mac80211/util.c b/net/mac80211/util.c
+index a7187bd..370a7fe 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c
+@@ -1320,6 +1320,9 @@ int ieee80211_reconfig(struct ieee80211_local *local)
+ 		if (ieee80211_sdata_running(sdata))
+ 			ieee80211_enable_keys(sdata);
+ 
++	local->in_reconfig = false;
++	barrier();
++
+  wake_up:
+ 	/*
+ 	 * Clear the WLAN_STA_BLOCK_BA flag so new aggregation
+-- 
+1.7.0.4
+

@@ -1,0 +1,168 @@
+From bffd888fbff754cde3959bafb62b5ea8660bf1a4 Mon Sep 17 00:00:00 2001
+From: Eyal Shapira <eyal@wizery.com>
+Date: Thu, 13 Sep 2012 02:29:58 +0300
+Subject: [PATCH 24/40] wl12xx: clear RX filters when adding AP/GO interface
+
+In AP/GO we don't want RX filters configured by upper levels
+to be in effect. AP/GO has to be able to get all traffic
+including broadcasts (for DHCP for example).
+Once the last AP is removed we restore the filters.
+Also fix a minor bug in some error paths in remove interface
+where we might not go back to ELP sleep.
+
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h    |    1 +
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/init.c   |    4 +++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c   |   44 ++++++++++++++++++++++++----------
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h |    3 ++
+ 4 files changed, 39 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+index 52eebfe..b7c9f07 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+@@ -98,6 +98,7 @@ int wl12xx_cmd_generic_cfg(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ int wl12xx_allocate_link(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ 			 u8 *hlid);
+ void wl12xx_free_link(struct wl1271 *wl, struct wl12xx_vif *wlvif, u8 *hlid);
++int wl1271_configure_wowlan(struct wl1271 *wl, struct cfg80211_wowlan *wow);
+ 
+ enum wl1271_commands {
+ 	CMD_INTERROGATE	= 1, /* use this to read information elements */
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/init.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/init.c
+index 4513a66..66c26dc 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/init.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/init.c
+@@ -594,6 +594,10 @@ int wl1271_init_vif_specific(struct wl1271 *wl, struct ieee80211_vif *vif)
+ 			ret = wl1271_acx_sleep_auth(wl, WL1271_PSM_CAM);
+ 			if (ret < 0)
+ 				return ret;
++
++			ret = wl1271_configure_wowlan(wl, NULL);
++			if (ret < 0)
++				return ret;
+ 		} else if (!wl->sta_count) {
+ 			/* Configure for ELP power saving */
+ 			ret = wl1271_acx_sleep_auth(wl, WL1271_PSM_ELP);
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index 28e61c3..ea79cb0 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -2290,11 +2290,12 @@ err:
+ 	return ret;
+ }
+ 
+-static int wl1271_configure_wowlan(struct wl1271 *wl,
+-				   struct cfg80211_wowlan *wow)
++int wl1271_configure_wowlan(struct wl1271 *wl, struct cfg80211_wowlan *wow)
+ {
+ 	int i, ret;
+ 
++	wl1271_debug(DEBUG_MAC80211, "configure_wowlan: wow %p", wow);
++
+ 	if (!wow || wow->any || !wow->n_patterns) {
+ 		ret = wl1271_rx_data_filtering_enable(wl, 0, FILTER_SIGNAL);
+ 		if (ret < 0)
+@@ -2662,6 +2663,7 @@ static void wl1271_op_stop_locked(struct wl1271 *wl)
+ 	memset(wl->links_map, 0, sizeof(wl->links_map));
+ 	memset(wl->roc_map, 0, sizeof(wl->roc_map));
+ 	wl->active_sta_count = 0;
++	wl->wowlan_patterns = NULL;
+ 
+ 	/* The system link is always allocated */
+ 	__set_bit(WL12XX_SYSTEM_HLID, wl->links_map);
+@@ -3146,31 +3148,36 @@ static void __wl1271_op_remove_interface(struct wl1271 *wl,
+ 	}
+ 
+ 	if (!test_bit(WL1271_FLAG_RECOVERY_IN_PROGRESS, &wl->flags)) {
+-		/* disable active roles and clear RX filters */
++		/* disable active roles */
+ 		ret = wl1271_ps_elp_wakeup(wl);
+ 		if (ret < 0)
+ 			goto deinit;
+ 
+ 		if (wlvif->bss_type == BSS_TYPE_STA_BSS ||
+ 		    wlvif->bss_type == BSS_TYPE_IBSS) {
+-			ret = wl1271_configure_wowlan(wl, NULL);
+-			if (ret < 0)
+-				goto deinit;
+-
+ 			if (wl12xx_dev_role_started(wlvif))
+ 				wl12xx_stop_dev(wl, wlvif);
+ 		}
+ 
++		/* Restore RX filters if last AP and still at least one STA */
++		if (wl->ap_count == 1 && wl->sta_count &&
++		    wlvif->bss_type == BSS_TYPE_AP_BSS &&
++		    wl->wowlan_patterns) {
++			ret = wl1271_configure_wowlan(wl, wl->wowlan_patterns);
++			if (ret < 0)
++				goto sleep;
++		}
++
+ 		ret = wl12xx_cmd_role_disable(wl, &wlvif->role_id);
+ 		if (ret < 0)
+-			goto deinit;
++			goto sleep;
+ 
+ 		if (vif->dummy_p2p) {
+ 			ret = wl12xx_cmd_role_disable(wl, &wlvif->dev_role_id);
+ 			if (ret < 0)
+-				goto deinit;
++				goto sleep;
+ 		}
+-
++sleep:
+ 		wl1271_ps_elp_sleep(wl);
+ 	}
+ deinit:
+@@ -5035,17 +5042,28 @@ static int wl12xx_op_set_rx_filters(struct ieee80211_hw *hw,
+ 
+ 	mutex_lock(&wl->mutex);
+ 
+-	wl1271_debug(DEBUG_MAC80211, "mac80211 set rx filters");
++	wl1271_debug(DEBUG_MAC80211, "mac80211 set rx filters: wowlan %p",
++		     wowlan);
+ 
+-	if (unlikely(wl->state != WLCORE_STATE_ON))
++	if (unlikely(wl->state != WLCORE_STATE_ON)) {
++		ret = -EOPNOTSUPP;
+ 		goto out;
++	}
+ 
+ 	ret = wl1271_ps_elp_wakeup(wl);
+ 	if (ret < 0)
+ 		goto out;
+ 
+-	ret = wl1271_configure_wowlan(wl, wowlan);
++	/* No AP roles so configure FW with new filters */
++	if (!wl->ap_count) {
++		ret = wl1271_configure_wowlan(wl, wowlan);
++		if (ret < 0)
++			goto out_sleep;
++	}
++
++	wl->wowlan_patterns = wowlan;
+ 
++out_sleep:
+ 	wl1271_ps_elp_sleep(wl);
+ out:
+ 	mutex_unlock(&wl->mutex);
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+index e9af979..999b4e1 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+@@ -585,6 +585,9 @@ struct wl1271 {
+ 
+ 	/* Short GI is disabled in the FW - For certification tests purposes */
+ 	bool disable_sgi;
++
++	/* Patterns configured with set_rx_filters */
++	struct cfg80211_wowlan *wowlan_patterns;
+ };
+ 
+ struct wl1271_station {
+-- 
+1.7.0.4
+

@@ -1,0 +1,243 @@
+From 653391c96c18e8ef59ec386fc3b5639ff86a293d Mon Sep 17 00:00:00 2001
+From: Eyal Shapira <eyal@wizery.com>
+Date: Wed, 12 Sep 2012 05:28:54 +0300
+Subject: [PATCH 22/40] wl12xx: add sysfs control over disable SGI
+
+The FW by default works with Short GI whenever possible.
+This is causing trouble with some sniffers used in certification
+labs. An option to disable SGI was added to the FW through
+a generic command API. Add support for this new API
+and enable control over disabling SGI through sysfs.
+debugfs cannot be used here as the certification tests are being
+run on production devices.
+Note that we still publish support for SGI 20 in either STA/AP
+however Short GI won't be used effectively when disable_sgi is 1.
+This solution is good enough according to the certification folks.
+
+(The generic cmd part is based on Luca's dropbcast patch
+which was dropped)
+
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c    |   34 +++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h    |   21 +++++++++-
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c   |   78 ++++++++++++++++++++++++++++++++-
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h |    3 +
+ 4 files changed, 132 insertions(+), 4 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
+index e0f9f27..3c0208e 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
+@@ -2033,3 +2033,37 @@ int wl12xx_stop_dev(struct wl1271 *wl, struct wl12xx_vif *wlvif)
+ out:
+ 	return ret;
+ }
++
++
++/* generic firmware configuration - used as a feature dumpster */
++int wl12xx_cmd_generic_cfg(struct wl1271 *wl, struct wl12xx_vif *wlvif,
++			   u8 index, bool enable, u8 value)
++{
++	struct wl12xx_cmd_generic_cfg *cmd;
++	int ret;
++
++	wl1271_debug(DEBUG_CMD, "cmd generic cfg (%d %d %d)",
++		     index, enable, value);
++
++	cmd = kzalloc(sizeof(*cmd), GFP_KERNEL);
++	if (!cmd) {
++		ret = -ENOMEM;
++		goto out;
++	}
++	cmd->role_id    = wlvif ? wlvif->role_id : WL12XX_INVALID_ROLE_ID;
++	cmd->index      = index;
++	cmd->status     = (u8) enable;
++	cmd->value      = value;
++
++	ret = wl1271_cmd_send(wl, CMD_GENERIC_CFG, cmd, sizeof(*cmd), 0);
++	if (ret < 0) {
++		wl1271_error("failed to send generic cfg command");
++		goto out_free;
++	}
++
++out_free:
++	kfree(cmd);
++
++out:
++	return ret;
++}
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+index 4716247..52eebfe 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+@@ -93,6 +93,8 @@ int wl12xx_cmd_channel_switch(struct wl1271 *wl,
+ 			      struct wl12xx_vif *wlvif,
+ 			      struct ieee80211_channel_switch *ch_switch);
+ int wl12xx_cmd_stop_channel_switch(struct wl1271 *wl);
++int wl12xx_cmd_generic_cfg(struct wl1271 *wl, struct wl12xx_vif *wlvif,
++			   u8 index, bool enable, u8 value);
+ int wl12xx_allocate_link(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ 			 u8 *hlid);
+ void wl12xx_free_link(struct wl1271 *wl, struct wl12xx_vif *wlvif, u8 *hlid);
+@@ -154,7 +156,9 @@ enum wl1271_commands {
+ 	CMD_WFD_START_DISCOVERY	= 45,
+ 	CMD_WFD_STOP_DISCOVERY	= 46,
+ 	CMD_WFD_ATTRIBUTE_CONFIG	= 47,
+-	CMD_NOP			= 48,
++
++	CMD_GENERIC_CFG	        = 48,
++	CMD_NOP			= 49,
+ 	CMD_LAST_COMMAND,
+ 
+ 	MAX_COMMAND_ID = 0xFFFF,
+@@ -725,4 +729,19 @@ struct wl12xx_cmd_stop_channel_switch {
+ 	struct wl1271_cmd_header header;
+ } __packed;
+ 
++enum wl12xx_generic_cfg {
++	WL12XX_GENCFG_DROP_BCAST        = 1,
++	WL12XX_GENCFG_TRANSMIT_POWER    = 2,
++	WL12XX_GENCFG_ARUBA_IOP_FIX     = 3,
++	WL12XX_GENCFG_DISABLE_SGI       = 4,
++};
++
++struct wl12xx_cmd_generic_cfg {
++	u8 role_id;
++	u8 index;
++	u8 status;
++	u8 value;
++} __packed;
++
++
+ #endif /* __WL1271_CMD_H__ */
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index c70ad6f..8c108fd 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -5869,6 +5869,68 @@ static DEVICE_ATTR(bt_coex_state, S_IRUGO | S_IWUSR,
+ 		   wl1271_sysfs_show_bt_coex_state,
+ 		   wl1271_sysfs_store_bt_coex_state);
+ 
++static ssize_t wl1271_sysfs_read_disable_sgi(struct device *dev,
++					     struct device_attribute *attr,
++					     char *buf)
++{
++	struct wl1271 *wl = dev_get_drvdata(dev);
++	ssize_t len = PAGE_SIZE;
++
++	mutex_lock(&wl->mutex);
++	len = snprintf(buf, len, "%d\n", wl->disable_sgi);
++	mutex_unlock(&wl->mutex);
++
++	return len;
++}
++
++static ssize_t wl1271_sysfs_write_disable_sgi(struct device *dev,
++					      struct device_attribute *attr,
++					      const char *buf, size_t count)
++{
++	struct wl1271 *wl = dev_get_drvdata(dev);
++	unsigned long res;
++	int ret;
++
++	ret = kstrtoul(buf, 10, &res);
++	if (ret < 0) {
++		wl1271_warning("invalid value written to disable_sgi");
++		return count;
++	}
++
++	mutex_lock(&wl->mutex);
++
++	res = !!res;
++
++	if (res == wl->disable_sgi)
++		goto out;
++
++	if (unlikely(wl->state != WLCORE_STATE_ON)) {
++		wl1271_warning("chip is off");
++		goto out;
++	}
++
++	ret = wl1271_ps_elp_wakeup(wl);
++	if (ret < 0)
++		goto out;
++
++	ret = wl12xx_cmd_generic_cfg(wl, NULL,
++				     WL12XX_GENCFG_DISABLE_SGI, res, 0);
++	if (ret < 0)
++		goto out_sleep;
++
++	wl->disable_sgi = res;
++
++out_sleep:
++	wl1271_ps_elp_sleep(wl);
++out:
++	mutex_unlock(&wl->mutex);
++	return count;
++}
++
++static DEVICE_ATTR(disable_sgi, S_IRUGO | S_IWUSR,
++		   wl1271_sysfs_read_disable_sgi,
++		   wl1271_sysfs_write_disable_sgi);
++
+ static ssize_t wl1271_sysfs_show_hw_pg_ver(struct device *dev,
+ 					   struct device_attribute *attr,
+ 					   char *buf)
+@@ -6596,10 +6658,10 @@ static int wl1271_free_hw(struct wl1271 *wl)
+ 	wl12xx_core_dump_free(wl);
+ 
+ 	device_remove_bin_file(wl->dev, &fwlog_attr);
+-
++	device_remove_file(wl->dev, &dev_attr_disable_sgi);
+ 	device_remove_file(wl->dev, &dev_attr_hw_pg_ver);
+-
+ 	device_remove_file(wl->dev, &dev_attr_bt_coex_state);
++
+ 	kfree(wl->buffer_32);
+ 	kfree(wl->mbox);
+ 	kfree(wl->rx_mem_pool_addr);
+@@ -6744,15 +6806,25 @@ static int __devinit wl12xx_probe(struct platform_device *pdev)
+ 		goto out_bt_coex_state;
+ 	}
+ 
++	/* Create sysfs file to control Short GI disabling */
++	ret = device_create_file(wl->dev, &dev_attr_disable_sgi);
++	if (ret < 0) {
++		wl1271_error("failed to create sysfs file disable_sgi");
++		goto out_hw_pg_ver;
++	}
++
+ 	/* Create sysfs file for the FW log */
+ 	ret = device_create_bin_file(wl->dev, &fwlog_attr);
+ 	if (ret < 0) {
+ 		wl1271_error("failed to create sysfs file fwlog");
+-		goto out_hw_pg_ver;
++		goto out_disable_sgi;
+ 	}
+ 
+ 	return 0;
+ 
++out_disable_sgi:
++	device_remove_file(wl->dev, &dev_attr_disable_sgi);
++
+ out_hw_pg_ver:
+ 	device_remove_file(wl->dev, &dev_attr_hw_pg_ver);
+ 
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+index 2ecfa69..e9af979 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+@@ -582,6 +582,9 @@ struct wl1271 {
+ 
+ 	/* mutex for protecting the tx_flush function */
+ 	struct mutex flush_mutex;
++
++	/* Short GI is disabled in the FW - For certification tests purposes */
++	bool disable_sgi;
+ };
+ 
+ struct wl1271_station {
+-- 
+1.7.0.4
+

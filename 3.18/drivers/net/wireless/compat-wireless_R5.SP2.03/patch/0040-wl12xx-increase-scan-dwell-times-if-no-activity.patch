@@ -1,0 +1,142 @@
+From 2bc734191a899566fd4c8da251e8ddbb5205b8db Mon Sep 17 00:00:00 2001
+From: Eyal Shapira <eyal@wizery.com>
+Date: Thu, 13 Sep 2012 19:45:39 +0300
+Subject: [PATCH 40/40] wl12xx: increase scan dwell times if no activity
+
+There's a limit on scan dwell times of max 30ms in order
+to avoid degrading voip traffic which could be going on
+while scanning. However these dwell times increase the
+chance of missing out on nearby APs leading to partial
+scan results. Allow configuration of longer dwell times
+in case there no active interface (i.e. no STA associated
+or AP up)
+
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h  |    1 +
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h |   18 ++++++++++++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c |    6 ++++--
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/scan.c |   22 +++++++++++++++++-----
+ 4 files changed, 40 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+index e79206b..f2d772f 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.h
+@@ -101,6 +101,7 @@ int wl12xx_allocate_link(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ 			 u8 *hlid);
+ void wl12xx_free_link(struct wl1271 *wl, struct wl12xx_vif *wlvif, u8 *hlid);
+ int wl1271_configure_wowlan(struct wl1271 *wl, struct cfg80211_wowlan *wow);
++u8 wl12xx_open_count(struct wl1271 *wl);
+ 
+ enum wl1271_commands {
+ 	CMD_INTERROGATE	= 1, /* use this to read information elements */
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h
+index c718867..33bcce7 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/conf.h
+@@ -1087,6 +1087,24 @@ struct conf_scan_settings {
+ 	u32 max_dwell_time_active;
+ 
+ 	/*
++	 * The minimum time to wait on each channel for active scans
++	 * when there's a concurrent active interface. This should
++	 * lower than min_dwell_time_active usually in order to avoid
++	 * interfering with possible voip traffic on another interface.
++	 *
++	 * Range: u32 tu/1000
++	 */
++	u32 min_dwell_time_active_conc;
++
++	/*
++	 * The maximum time to wait on each channel for active scans
++	 * See explanation about min_dwell_time_active_conc
++	 *
++	 * Range: u32 tu/1000
++	 */
++	u32 max_dwell_time_active_conc;
++
++	/*
+ 	 * The minimum time to wait on each channel for passive scans
+ 	 *
+ 	 * Range: u32 tu/1000
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index d636bf0..6c8292b 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -279,8 +279,10 @@ static struct conf_drv_settings default_conf = {
+ 		.avg_weight_snr_data          = 10,
+ 	},
+ 	.scan = {
+-		.min_dwell_time_active        = 7500,
+-		.max_dwell_time_active        = 30000,
++		.min_dwell_time_active_conc   = 7500,
++		.max_dwell_time_active_conc   = 30000,
++		.min_dwell_time_active        = 25000,
++		.max_dwell_time_active        = 50000,
+ 		.min_dwell_time_passive       = 100000,
+ 		.max_dwell_time_passive       = 100000,
+ 		.num_probe_reqs               = 2,
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/scan.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/scan.c
+index bbe2966..4600255 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/scan.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/scan.c
+@@ -93,9 +93,11 @@ out:
+ static int wl1271_get_scan_channels(struct wl1271 *wl,
+ 				    struct cfg80211_scan_request *req,
+ 				    struct basic_scan_channel_params *channels,
+-				    enum ieee80211_band band, bool passive)
++				    enum ieee80211_band band, bool passive,
++				    bool active_vif_exists)
+ {
+ 	struct conf_scan_settings *c = &wl->conf.scan;
++	u32 min_dwell_time_active, max_dwell_time_active;
+ 	int i, j;
+ 	u32 flags;
+ 
+@@ -128,19 +130,27 @@ static int wl1271_get_scan_channels(struct wl1271 *wl,
+ 				     req->channels[i]->beacon_found);
+ 
+ 			if (!passive) {
++				min_dwell_time_active = active_vif_exists ?
++					c->min_dwell_time_active_conc :
++					c->min_dwell_time_active;
++
++				max_dwell_time_active = active_vif_exists ?
++					c->max_dwell_time_active_conc :
++					c->max_dwell_time_active;
++
+ 				if (req->min_dwell)
+ 					channels[j].min_duration =
+ 						req->min_dwell;
+ 				else
+ 					channels[j].min_duration =
+-					  cpu_to_le32(c->min_dwell_time_active);
++					  cpu_to_le32(min_dwell_time_active);
+ 
+ 				if (req->max_dwell)
+ 					channels[j].max_duration =
+ 						req->max_dwell;
+ 				else
+ 					channels[j].max_duration =
+-					  cpu_to_le32(c->max_dwell_time_active);
++					  cpu_to_le32(max_dwell_time_active);
+ 			} else {
+ 				if ((req->min_dwell) &&
+ 					(wl->scan.req->n_ssids == 0))
+@@ -214,8 +224,10 @@ static int wl1271_scan_send(struct wl1271 *wl, struct ieee80211_vif *vif,
+ 	cmd->params.scan_options = cpu_to_le16(scan_options);
+ 
+ 	cmd->params.n_ch = wl1271_get_scan_channels(wl, wl->scan.req,
+-						    cmd->channels,
+-						    band, passive);
++					    cmd->channels,
++					    band, passive,
++					    !!wl12xx_open_count(wl));
++
+ 	if (cmd->params.n_ch == 0) {
+ 		ret = WL1271_NOTHING_TO_SCAN;
+ 		goto out;
+-- 
+1.7.0.4
+

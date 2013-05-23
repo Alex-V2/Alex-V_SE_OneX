@@ -1,0 +1,160 @@
+From 74ba71be86052686f8e354e957b5a160ac619b03 Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Sun, 2 Sep 2012 20:13:28 +0300
+Subject: [PATCH 11/16] wl12xx: don't ROC or switch to MR on p2p mgmt on-chan Tx
+
+When in the SR FW and Tx arrives on the p2p mgmt interface on the
+same channel as an existing p2p role, don't switch to MR or ROC on
+the newly started device role. Just start the device role and use it
+for Tx. Do the ROC as usual in the MR FW.
+
+This avoids problems during p2p operation, when we need to respond
+to packets via the p2p-dev interface (i.e. provision discovery in GO).
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ drivers/net/wireless/wl12xx/cmd.c     |    9 +++++
+ drivers/net/wireless/wl12xx/debugfs.c |    2 +-
+ drivers/net/wireless/wl12xx/main.c    |   58 +++++++++++++++++++++++++++++++-
+ drivers/net/wireless/wl12xx/wl12xx.h  |    2 +
+ 4 files changed, 68 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/net/wireless/wl12xx/cmd.c b/drivers/net/wireless/wl12xx/cmd.c
+index 2e945e8..44fc971 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
+@@ -1976,6 +1976,15 @@ int wl12xx_start_dev(struct wl1271 *wl, struct wl12xx_vif *wlvif)
+ 	if (ret < 0)
+ 		goto out_disable;
+ 
++	/*
++	 * don't ROC if we are on the SR FW in the dummy p2p interface,
++	 * and there's already an existing interface on the same channel
++	 */
++	if (wl->fw_type == WL12XX_FW_TYPE_NORMAL &&
++	    wl12xx_wlvif_to_vif(wlvif)->dummy_p2p &&
++	    is_p2p_mgmt_on_existing_chan(wl))
++		goto out;
++
+ 	ret = wl12xx_roc(wl, wlvif, wlvif->dev_role_id);
+ 	if (ret < 0)
+ 		goto out_stop;
+diff --git a/drivers/net/wireless/wl12xx/debugfs.c b/drivers/net/wireless/wl12xx/debugfs.c
+index 1c73b4b..7e4ccbd 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
+@@ -454,7 +454,7 @@ static ssize_t vif_count_read(struct file *file, char __user *user_buf,
+ 
+ 	return wl1271_format_buffer(user_buf, count,
+ 				    ppos, "%d\n",
+-				    ieee80211_started_vifs_count(wl->hw));
++				    wl12xx_open_count(wl));
+ }
+ 
+ static const struct file_operations vif_count_ops = {
+diff --git a/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/wl12xx/main.c
+index cb64305..e2b99c9 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -413,6 +413,45 @@ static void wl1271_free_ap_keys(struct wl1271 *wl, struct wl12xx_vif *wlvif);
+ static DEFINE_MUTEX(wl_list_mutex);
+ static LIST_HEAD(wl_list);
+ 
++bool is_p2p_mgmt_on_existing_chan(struct wl1271 *wl)
++{
++	struct wl12xx_vif *mgmt, *wlvif;
++
++	/* find the p2p mgmt vif */
++	wl12xx_for_each_wlvif(wl, mgmt) {
++		if (wl12xx_wlvif_to_vif(mgmt)->dummy_p2p)
++			break;
++	}
++
++	/* p2p mgmt not found */
++	if (!wl12xx_wlvif_to_vif(mgmt)->dummy_p2p)
++		return false;
++
++	/* idle vifs have no channel */
++	if (wl12xx_wlvif_to_vif(mgmt)->bss_conf.idle)
++		return false;
++
++	wl12xx_for_each_wlvif(wl, wlvif) {
++		/* skip this interface */
++		if (mgmt == wlvif)
++			continue;
++
++		/* we only care about p2p interfaces on the same chan */
++		if (!wlvif->p2p)
++			continue;
++
++		/* idle interfaces have no channel */
++		if (wl12xx_wlvif_to_vif(wlvif)->bss_conf.idle)
++			continue;
++
++		if (mgmt->band == wlvif->band &&
++		    mgmt->channel == wlvif->channel)
++			return true;
++	}
++
++	return false;
++}
++
+ static int wl1271_check_operstate(struct wl1271 *wl, struct wl12xx_vif *wlvif,
+ 				  unsigned char operstate)
+ {
+@@ -1177,6 +1216,20 @@ static irqreturn_t wl12xx_irq(int irq, void *cookie)
+ 	return IRQ_HANDLED;
+ }
+ 
++u8 wl12xx_open_count(struct wl1271 *wl)
++{
++	u8 open_count = ieee80211_started_vifs_count(wl->hw);
++
++	/*
++	 * don't count the p2p mgmt interface if on the same channel as an
++	 * existing interface. no need to switch to MR for it.
++	 */
++	if (open_count > 1 && is_p2p_mgmt_on_existing_chan(wl))
++		open_count--;
++
++	return open_count;
++}
++
+ static int wl12xx_fetch_firmware(struct wl1271 *wl, bool plt)
+ {
+ 	const struct firmware *fw;
+@@ -1185,7 +1238,7 @@ static int wl12xx_fetch_firmware(struct wl1271 *wl, bool plt)
+ 	int ret;
+ 	u8 open_count;
+ 
+-	open_count = ieee80211_started_vifs_count(wl->hw);
++	open_count = wl12xx_open_count(wl);
+ 	if (wl->force_mr_fw) {
+ 		if (open_count <= 1) {
+ 			wl1271_info("forcing mr firmware");
+@@ -2698,7 +2751,8 @@ wl12xx_need_fw_change(struct wl1271 *wl)
+ 	if (test_bit(WL1271_FLAG_VIF_CHANGE_IN_PROGRESS, &wl->flags))
+ 		return false;
+ #endif
+-	open_count = ieee80211_started_vifs_count(wl->hw);
++	open_count = wl12xx_open_count(wl);
++
+ 	wl1271_debug(DEBUG_CMD, "open_count=%d, current_fw=%d (force_mr=%d)",
+ 		     open_count, current_fw, wl->force_mr_fw);
+ 
+diff --git a/drivers/net/wireless/wl12xx/wl12xx.h b/drivers/net/wireless/wl12xx/wl12xx.h
+index 43361b6..cacf638 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/wl12xx.h
+@@ -753,6 +753,8 @@ void wl12xx_update_sta_state(struct wl1271 *wl,
+ 			     enum ieee80211_sta_state state);
+ int wl12xx_init_pll_clock(struct wl1271 *wl, int *selected_clock);
+ bool wl12xx_change_fw_if_needed(struct wl1271 *wl);
++bool is_p2p_mgmt_on_existing_chan(struct wl1271 *wl);
++u8 wl12xx_open_count(struct wl1271 *wl);
+ 
+ #define JOIN_TIMEOUT 5000 /* 5000 milliseconds to join */
+ 
+-- 
+1.7.1
+

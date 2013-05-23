@@ -1,0 +1,63 @@
+From 8362798f1b8ea5853a4ea3d530f7b2880a725a7d Mon Sep 17 00:00:00 2001
+From: Yair Shapira <yair.shapira@ti.com>
+Date: Sun, 9 Sep 2012 22:40:58 +0300
+Subject: [PATCH 21/40] wl12xx: add module param to enable/disable core_dump
+
+Signed-off-by: Yair Shapira <yair.shapira@ti.com>
+Signed-off-by: Igal Chernobelsky <igalc@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c |   10 +++++++++-
+ 1 files changed, 9 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index 9f30293..c70ad6f 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -54,6 +54,7 @@
+ #define WL1271_BOOT_RETRIES 3
+ 
+ #define WL12XX_CORE_DUMP_CHUNK_SIZE	(4 * PAGE_SIZE)
++#define WL12XX_CORE_DUMP_ENABLED	(false)
+ 
+ static struct conf_drv_settings default_conf = {
+ 	.sg = {
+@@ -365,7 +366,7 @@ static struct conf_drv_settings default_conf = {
+ 		.threshold                    = 0,
+ 	},
+ 	.core_dump = {
+-		.enable                       = false,
++		.enable                       = WL12XX_CORE_DUMP_ENABLED,
+ 
+ 		/* wl127x chip memory partitions */
+ 		.mem_wl127x		      = {
+@@ -445,6 +446,7 @@ static struct conf_drv_settings default_conf = {
+ };
+ 
+ static char *fwlog_param;
++static bool core_dump_enabled = WL12XX_CORE_DUMP_ENABLED;
+ static bool bug_on_recovery;
+ static char *fref_param;
+ static char *tcxo_param;
+@@ -834,6 +836,9 @@ static void wl1271_conf_init(struct wl1271 *wl)
+ 		}
+ 	}
+ 
++	/* Adjust core_dump enable according to optional module param */
++	wl->conf.core_dump.enable = core_dump_enabled;
++
+ 	wl->ref_clock = -1;
+ 	if (fref_param) {
+ 		if (!strcmp(fref_param, "19.2"))
+@@ -6822,6 +6827,9 @@ module_param_named(fwlog, fwlog_param, charp, 0);
+ MODULE_PARM_DESC(keymap,
+ 		 "FW logger options: continuous, ondemand, dbgpins or disable");
+ 
++module_param_named(core_dump, core_dump_enabled, bool, S_IRUSR | S_IWUSR);
++MODULE_PARM_DESC(core_dump, "Core Dump: 0-disable, 1-enable");
++
+ module_param(bug_on_recovery, bool, S_IRUSR | S_IWUSR);
+ MODULE_PARM_DESC(bug_on_recovery, "BUG() on fw recovery");
+ 
+-- 
+1.7.0.4
+

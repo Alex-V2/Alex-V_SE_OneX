@@ -1,0 +1,38 @@
+From fb9089d79e710a20c43a1fc9bdc88053804d9c30 Mon Sep 17 00:00:00 2001
+From: Eyal Shapira <eyal@wizery.com>
+Date: Tue, 4 Sep 2012 02:36:22 +0300
+Subject: [PATCH 08/16] wl12xx: disable arp filter only if configured
+
+Disabling auto arp actually causes FW resources allocation
+and it's better to avoid that unless an arp filter was
+already configured (i.e. the interface had an IP configured).
+This also prevents exceeding the FW arp filters limit (2)
+in certain scenarios. Once such case which poses a problem
+is having a P2P_GO with an associated client + a connected STA
+concurrently. Once you disconnect the GO, for a brief moment
+the interface is changed to STA before removal. This leads to
+having 3 STA interfaces (the actual STA, P2P device and the
+disconnected GO which turned into a STA) and would attempt
+allocating 3 FW arp filters which fails.
+
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/wl12xx/main.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/wl12xx/main.c
+index e4d3f8f..1b148b8 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -4716,7 +4716,7 @@ sta_not_found:
+ 				(ACX_ARP_FILTER_ARP_FILTERING |
+ 				 ACX_ARP_FILTER_AUTO_ARP),
+ 				addr);
+-		} else {
++		} else if (wlvif->ip_addr) {
+ 			wlvif->ip_addr = 0;
+ 			ret = wl1271_acx_arp_ip_filter(wl, wlvif, 0, addr);
+ 		}
+-- 
+1.7.1
+

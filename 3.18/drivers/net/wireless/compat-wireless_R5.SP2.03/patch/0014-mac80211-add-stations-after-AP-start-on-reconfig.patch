@@ -1,0 +1,90 @@
+From dfaf2feb11838d0e7dcb2c00e72cd36067541b18 Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Sun, 3 Jun 2012 23:31:56 +0300
+Subject: [PATCH 14/40] mac80211: add stations after AP start on reconfig
+
+When performing a HW restart for an AP mode interface, add stations back
+only after the AP is beaconing. This mimics the normal flow of STA
+addition on AP.
+
+Some devices (wlcore) do not support adding stations before beaconing,
+so this has the added benefit of making recovery work for them.
+
+[Eyal - backported to R5]
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+Signed-off-by: John W. Linville <linville@tuxdriver.com>
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c |   45 ++++++++++++++++++++++++++++++++-------------
+ 1 files changed, 32 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c
+index 31a4a10..a7187bd 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/mac80211/util.c
+@@ -1187,22 +1187,21 @@ int ieee80211_reconfig(struct ieee80211_local *local)
+ 	/* add STAs back */
+ 	mutex_lock(&local->sta_mtx);
+ 	list_for_each_entry(sta, &local->sta_list, list) {
+-		if (sta->uploaded) {
+-			enum ieee80211_sta_state state = IEEE80211_STA_NONE;
++		enum ieee80211_sta_state state;
+ 
+-			sdata = sta->sdata;
+-			if (sdata->vif.type == NL80211_IFTYPE_AP_VLAN)
+-				sdata = container_of(sdata->bss,
+-					     struct ieee80211_sub_if_data,
+-					     u.ap);
++		if (!sta->uploaded)
++			continue;
+ 
+-			if (WARN_ON(drv_sta_add(local, sdata, &sta->sta)))
+-				continue;
++		/* AP-mode stations will be added later */
++		if (sta->sdata->vif.type == NL80211_IFTYPE_AP)
++			continue;
+ 
+-			while (state < sta->sta.state)
+-				drv_sta_state(local, sdata, &sta->sta,
+-					      ++state);
+-		}
++		if (WARN_ON(drv_sta_add(local, sta->sdata, &sta->sta)))
++			continue;
++
++		for (state = IEEE80211_STA_NONE;
++		     state < sta->sta.state; state++)
++			drv_sta_state(local, sta->sdata, &sta->sta, state + 1);
+ 	}
+ 	mutex_unlock(&local->sta_mtx);
+ 
+@@ -1296,6 +1295,26 @@ int ieee80211_reconfig(struct ieee80211_local *local)
+ 		}
+ 	}
+ 
++	/* APs are now beaconing, add back stations */
++	mutex_lock(&local->sta_mtx);
++	list_for_each_entry(sta, &local->sta_list, list) {
++		enum ieee80211_sta_state state;
++
++		if (!sta->uploaded)
++			continue;
++
++		if (sta->sdata->vif.type != NL80211_IFTYPE_AP)
++			continue;
++
++		if (WARN_ON(drv_sta_add(local, sta->sdata, &sta->sta)))
++			continue;
++
++		for (state = IEEE80211_STA_NONE;
++		     state < sta->sta.state; state++)
++			drv_sta_state(local, sta->sdata, &sta->sta, state + 1);
++	}
++	mutex_unlock(&local->sta_mtx);
++
+ 	/* add back keys */
+ 	list_for_each_entry(sdata, &local->interfaces, list)
+ 		if (ieee80211_sdata_running(sdata))
+-- 
+1.7.0.4
+

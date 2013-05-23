@@ -1,0 +1,54 @@
+From 6785940fa60bc78bc633b1c3f1a89c77895b8fc5 Mon Sep 17 00:00:00 2001
+From: Ido Yariv <ido@wizery.com>
+Date: Wed, 15 Aug 2012 17:20:16 +0300
+Subject: [PATCH 05/16] wl12xx: Fix unbalanced interrupts enablement
+
+The interrupt line is enabled by wl1271_boot_enable_interrupts, but it
+will not be disabled in all failure paths. Fix this.
+
+Signed-off-by: Ido Yariv <ido@wizery.com>
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ drivers/net/wireless/wl12xx/boot.c |   16 ++++++++++++++--
+ 1 files changed, 14 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/wireless/wl12xx/boot.c b/drivers/net/wireless/wl12xx/boot.c
+index c872542..a6343c0 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/boot.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/boot.c
+@@ -376,11 +376,16 @@ static int wl1271_boot_enable_interrupts(struct wl1271 *wl)
+ 	ret = wl1271_write32(wl, ACX_REG_INTERRUPT_MASK,
+ 			     WL1271_ACX_INTR_ALL & ~(WL1271_INTR_MASK));
+ 	if (ret < 0)
+-		goto out;
++		goto disable_interrupts;
+ 
+ 	ret = wl1271_write32(wl, HI_CFG, HI_CFG_DEF_VAL);
++	if (ret < 0)
++		goto disable_interrupts;
+ 
+-out:
++	return ret;
++
++disable_interrupts:
++	wl1271_disable_interrupts(wl);
+ 	return ret;
+ }
+ 
+@@ -927,6 +932,13 @@ int wl1271_boot(struct wl1271 *wl)
+ 		goto out;
+ 
+ 	ret = wl1271_event_mbox_config(wl);
++	if (ret < 0)
++		goto disable_interrupts;
++
++	return ret;
++
++disable_interrupts:
++	wl1271_disable_interrupts(wl);
+ 
+ out:
+ 	return ret;
+-- 
+1.7.1
+

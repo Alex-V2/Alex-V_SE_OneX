@@ -1,0 +1,100 @@
+From 0006d86a53fc618791a8c433d6aaf32a8c1bd926 Mon Sep 17 00:00:00 2001
+From: Arik Nemtsov <arik@wizery.com>
+Date: Sun, 5 Aug 2012 19:55:25 +0300
+Subject: [PATCH 10/16] wl12xx: enable the dev role on the p2p mgmt iface
+
+When starting a p2p mgmt interface, enable its device role. This
+is used to keep the FW Rx filters down for the p2p dev role MAC address.
+
+Signed-off-by: Arik Nemtsov <arik@wizery.com>
+---
+ drivers/net/wireless/wl12xx/cmd.c  |   26 ++++++++++++++++----------
+ drivers/net/wireless/wl12xx/main.c |   14 ++++++++++++++
+ 2 files changed, 30 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/net/wireless/wl12xx/cmd.c b/drivers/net/wireless/wl12xx/cmd.c
+index 836c932..2e945e8 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/cmd.c
+@@ -1962,12 +1962,15 @@ int wl12xx_start_dev(struct wl1271 *wl, struct wl12xx_vif *wlvif)
+ 		      wlvif->bss_type == BSS_TYPE_IBSS)))
+ 		return -EINVAL;
+ 
+-	ret = wl12xx_cmd_role_enable(wl,
+-				     wl12xx_wlvif_to_vif(wlvif)->addr,
+-				     WL1271_ROLE_DEVICE,
+-				     &wlvif->dev_role_id);
+-	if (ret < 0)
+-		goto out;
++	/* the dev role is already started for p2p mgmt interfaces */
++	if (!wl12xx_wlvif_to_vif(wlvif)->dummy_p2p) {
++		ret = wl12xx_cmd_role_enable(wl,
++					     wl12xx_wlvif_to_vif(wlvif)->addr,
++					     WL1271_ROLE_DEVICE,
++					     &wlvif->dev_role_id);
++		if (ret < 0)
++			goto out;
++	}
+ 
+ 	ret = wl12xx_cmd_role_start_dev(wl, wlvif);
+ 	if (ret < 0)
+@@ -1982,7 +1985,8 @@ int wl12xx_start_dev(struct wl1271 *wl, struct wl12xx_vif *wlvif)
+ out_stop:
+ 	wl12xx_cmd_role_stop_dev(wl, wlvif);
+ out_disable:
+-	wl12xx_cmd_role_disable(wl, &wlvif->dev_role_id);
++	if (!wl12xx_wlvif_to_vif(wlvif)->dummy_p2p)
++		wl12xx_cmd_role_disable(wl, &wlvif->dev_role_id);
+ out:
+ 	return ret;
+ }
+@@ -2013,9 +2017,11 @@ int wl12xx_stop_dev(struct wl1271 *wl, struct wl12xx_vif *wlvif)
+ 	if (ret < 0)
+ 		goto out;
+ 
+-	ret = wl12xx_cmd_role_disable(wl, &wlvif->dev_role_id);
+-	if (ret < 0)
+-		goto out;
++	if (!wl12xx_wlvif_to_vif(wlvif)->dummy_p2p) {
++		ret = wl12xx_cmd_role_disable(wl, &wlvif->dev_role_id);
++		if (ret < 0)
++			goto out;
++	}
+ 
+ out:
+ 	return ret;
+diff --git a/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/wl12xx/main.c
+index 1b148b8..cb64305 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -2851,6 +2851,14 @@ static int wl1271_op_add_interface(struct ieee80211_hw *hw,
+ 	if (ret < 0)
+ 		goto out;
+ 
++	if (vif->dummy_p2p) {
++		wl1271_info("adding p2p mgmt vif");
++		ret = wl12xx_cmd_role_enable(wl, vif->addr, WL1271_ROLE_DEVICE,
++					     &wlvif->dev_role_id);
++		if (ret < 0)
++			goto out;
++	}
++
+ 	ret = wl1271_init_vif_specific(wl, vif);
+ 	if (ret < 0)
+ 		goto out;
+@@ -2930,6 +2938,12 @@ static void __wl1271_op_remove_interface(struct wl1271 *wl,
+ 		if (ret < 0)
+ 			goto deinit;
+ 
++		if (vif->dummy_p2p) {
++			ret = wl12xx_cmd_role_disable(wl, &wlvif->dev_role_id);
++			if (ret < 0)
++				goto deinit;
++		}
++
+ 		wl1271_ps_elp_sleep(wl);
+ 	}
+ deinit:
+-- 
+1.7.1
+

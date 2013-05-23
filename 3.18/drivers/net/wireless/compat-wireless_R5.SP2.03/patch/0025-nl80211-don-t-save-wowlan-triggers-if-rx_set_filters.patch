@@ -1,0 +1,66 @@
+From 949c0c40aa9811d1a841850a4577d4b7c7c4d6bb Mon Sep 17 00:00:00 2001
+From: Eyal Shapira <eyal@wizery.com>
+Date: Thu, 13 Sep 2012 13:51:25 +0300
+Subject: [PATCH 25/40] nl80211: don't save wowlan triggers if rx_set_filters fails
+
+In case the device supports rx_set_filters and it fails
+avoid replacing the local state so we won't be out of sync
+with the lower levels.
+
+Signed-off-by: Eyal Shapira <eyal@wizery.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c |   21 +++++++++++++--------
+ 1 files changed, 13 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c
+index b678f69..46b1328 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/net/wireless/nl80211.c
+@@ -5907,6 +5907,7 @@ static int nl80211_set_wowlan(struct sk_buff *skb, struct genl_info *info)
+ 	struct nlattr *tb[NUM_NL80211_WOWLAN_TRIG];
+ 	struct cfg80211_wowlan no_triggers = {};
+ 	struct cfg80211_wowlan new_triggers = {};
++	struct cfg80211_wowlan *ntrig;
+ 	struct wiphy_wowlan_support *wowlan = &rdev->wiphy.wowlan;
+ 	int err, i;
+ 	int ret = 0;
+@@ -6035,24 +6036,28 @@ static int nl80211_set_wowlan(struct sk_buff *skb, struct genl_info *info)
+ 	}
+ 
+ 	if (memcmp(&new_triggers, &no_triggers, sizeof(new_triggers))) {
+-		struct cfg80211_wowlan *ntrig;
+ 		ntrig = kmemdup(&new_triggers, sizeof(new_triggers),
+ 				GFP_KERNEL);
+ 		if (!ntrig) {
+ 			err = -ENOMEM;
+ 			goto error;
+ 		}
+-		cfg80211_rdev_free_wowlan(rdev);
+-		rdev->wowlan = ntrig;
+ 	} else {
+  no_triggers:
+-		cfg80211_rdev_free_wowlan(rdev);
+-		rdev->wowlan = NULL;
++		ntrig = NULL;
+ 	}
+ 
+-	if (rdev->ops->set_rx_filters)
+-		ret = rdev->ops->set_rx_filters(&rdev->wiphy,
+-						rdev->wowlan);
++	if (rdev->ops->set_rx_filters) {
++		ret = rdev->ops->set_rx_filters(&rdev->wiphy, ntrig);
++		if (ret < 0) {
++			err = ret;
++			goto error;
++		}
++	}
++
++	cfg80211_rdev_free_wowlan(rdev);
++	rdev->wowlan = ntrig;
++
+ 	return ret;
+  error:
+ 	for (i = 0; i < new_triggers.n_patterns; i++)
+-- 
+1.7.0.4
+

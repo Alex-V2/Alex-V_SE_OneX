@@ -1,0 +1,100 @@
+From 860678076ad15c8f375c9a3460b6d533cc208eb3 Mon Sep 17 00:00:00 2001
+From: Yair Shapira <yair.shapira@ti.com>
+Date: Sun, 9 Sep 2012 22:40:55 +0300
+Subject: [PATCH 18/40] wl12xx: elp_wakeup when issuing recovery from userspace
+
+When triggering recovery from userspace (through debugfs or libnl) we
+now perform elp wakeup prior to queuing the recovery request. The reason
+is that the queue operation disables interrupts and ELP wakeup is needed for
+recovery operations such as on-demand firmware log and later on firmware
+core dump.
+
+The call to elp wakeup from recovery work fwlog function was removed because
+it is meaningless - it can only succeed if elp wakeup was alerady done.
+
+Note that in other cases before queuing a recovery request, either elp wakeup is
+called or the firmware is stuck (in this case wakeup is not done).
+
+Signed-off-by: Yair Shapira <yair.shapira@ti.com>
+Signed-off-by: Igal Chernobelsky <igalc@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c  |    9 +++++++++
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c     |   11 +++--------
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/testmode.c |   12 ++++++++++++
+ 3 files changed, 24 insertions(+), 8 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
+index 7e4ccbd..dea5169 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/debugfs.c
+@@ -302,9 +302,18 @@ static ssize_t start_recovery_write(struct file *file,
+ 				    size_t count, loff_t *ppos)
+ {
+ 	struct wl1271 *wl = file->private_data;
++	int ret;
+ 
+ 	mutex_lock(&wl->mutex);
++
++	/* Call ELP wakeup to allow general recovery processing */
++	ret = wl1271_ps_elp_wakeup(wl);
++	if (ret < 0)
++		wl1271_error(
++		    "start_recovery_write: FAILED wl1271_ps_elp_wakeup");
++
+ 	wl12xx_queue_recovery_work(wl);
++
+ 	mutex_unlock(&wl->mutex);
+ 
+ 	return count;
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index 427306a..e5b0d85 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -1399,14 +1399,9 @@ static void wl12xx_read_fwlog_panic(struct wl1271 *wl)
+ 	if (!block)
+ 		return;
+ 
+-	/* Make sure the chip is awake and the logger isn't active. */
+-	if (!wl1271_ps_elp_wakeup(wl)) {
+-		/* Do not send a stop fwlog command if the fw is hanged */
+-		if (!wl->watchdog_recovery)
+-			wl12xx_cmd_stop_fwlog(wl);
+-	}
+-	else
+-		goto out;
++	/* Do not send a stop fwlog command if the fw is hanged */
++	if (!wl->watchdog_recovery)
++		wl12xx_cmd_stop_fwlog(wl);
+ 
+ 	/* Read the first memory block address */
+ 	ret = wl12xx_fw_status(wl, wl->fw_status);
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/testmode.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/testmode.c
+index 1b17a07..6b60906 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/testmode.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/testmode.c
+@@ -259,10 +259,22 @@ static int wl1271_tm_cmd_set_plt_mode(struct wl1271 *wl, struct nlattr *tb[])
+ 
+ static int wl1271_tm_cmd_recover(struct wl1271 *wl, struct nlattr *tb[])
+ {
++	int ret;
++
+ 	wl1271_debug(DEBUG_TESTMODE, "testmode cmd recover");
+ 
++	mutex_lock(&wl->mutex);
++
++	/* Call ELP wakeup to allow general recovery processing */
++	ret = wl1271_ps_elp_wakeup(wl);
++	if (ret < 0)
++		wl1271_error(
++		    "wl1271_tm_cmd_recover: FAILED wl1271_ps_elp_wakeup");
++
+ 	wl12xx_queue_recovery_work(wl);
+ 
++	mutex_unlock(&wl->mutex);
++
+ 	return 0;
+ }
+ 
+-- 
+1.7.0.4
+

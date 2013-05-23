@@ -1,0 +1,54 @@
+From bdfee8199b04a33393772c4fe0c296983a39615c Mon Sep 17 00:00:00 2001
+From: Victor Goldenshtein <victorg@ti.com>
+Date: Tue, 11 Sep 2012 17:27:24 +0300
+Subject: [PATCH 36/40] wl12xx: new module param to set the dominant role
+
+New bool "ap_ch_is_dominant" module param.
+
+By default the STA channel is the dominant one (this flag
+is't set) and the AP/GO channel can follow it.
+
+Setting the ap_ch_is_dominant=1 will set the AP/GO channel as
+a dominant, which will block any STA attempt to authenticate
+on a different channel than the AP/GO operational channel.
+
+Signed-off-by: Victor Goldenshtein <victorg@ti.com>
+---
+ drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c |    7 +++++++
+ 1 files changed, 7 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+index 250ff86..1bd0259 100644
+--- a/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
++++ b/drivers/net/wireless/compat-wireless_R5.SP2.03/drivers/net/wireless/wl12xx/main.c
+@@ -452,6 +452,7 @@ static bool core_dump_enabled = WL12XX_CORE_DUMP_ENABLED;
+ static bool bug_on_recovery;
+ static char *fref_param;
+ static char *tcxo_param;
++static bool ap_ch_is_dominant;
+ 
+ static void __wl1271_op_remove_interface(struct wl1271 *wl,
+ 					 struct ieee80211_vif *vif,
+@@ -6435,6 +6436,9 @@ static int wl1271_init_ieee80211(struct wl1271 *wl)
+ 		IEEE80211_HW_SCAN_WHILE_IDLE |
+ 		IEEE80211_HW_SUPPORTS_RX_FILTERS;
+ 
++	if (ap_ch_is_dominant)
++		wl->hw->flags |= IEEE80211_HW_AP_CH_IS_DOMINANT;
++
+ 	wl->hw->wiphy->cipher_suites = cipher_suites;
+ 	wl->hw->wiphy->n_cipher_suites = ARRAY_SIZE(cipher_suites);
+ 
+@@ -6999,6 +7003,9 @@ module_param_named(tcxo, tcxo_param, charp, 0);
+ MODULE_PARM_DESC(tcxo,
+ 		 "TCXO clock: 19.2, 26, 38.4, 52, 16.368, 32.736, 16.8, 33.6");
+ 
++module_param(ap_ch_is_dominant, bool, S_IRUSR | S_IWUSR);
++MODULE_PARM_DESC(ap_ch_is_dominant, "Sets the AP/GO channel as dominant");
++
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Luciano Coelho <coelho@ti.com>");
+ MODULE_AUTHOR("Juuso Oikarinen <juuso.oikarinen@nokia.com>");
+-- 
+1.7.0.4
+
