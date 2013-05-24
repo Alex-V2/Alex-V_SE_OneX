@@ -4880,8 +4880,7 @@ static struct tegra_cpufreq_table_data cpufreq_tables[] = {
 	{ freq_table_1p4GHz, 1, 13 },
 	{ freq_table_1p5GHz, 1, 14 },
 	{ freq_table_1p6GHz, 1, 19 },
-	{ freq_table_1p624GHz, 1, 20 },
-	{ freq_table_1p7GHz, 1, 21 },
+	{ freq_table_1p7GHz, 1, 20 },
 };
 
 static int clip_cpu_rate_limits(
