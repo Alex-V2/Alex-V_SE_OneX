@@ -179,7 +179,7 @@ struct suspend_context tegra_sctx;
 #define MC_SECURITY_SIZE	0x70
 #define MC_SECURITY_CFG2	0x7c
 
-#define AWAKE_CPU_FREQ_MIN	25500
+#define AWAKE_CPU_FREQ_MIN	51000
 static struct pm_qos_request_list awake_cpu_freq_req;
 
 /*
@@ -1241,6 +1241,7 @@ out:
 		memcpy(tegra_lp1_register_core_highvolt(), &lp1_core_highvolt, 4);
 	}
 #endif
+
 	/* !!!FIXME!!! THIS IS TEGRA2 ONLY */
 	/* Initialize scratch registers used for CPU LP2 synchronization */
 	writel(0, pmc + PMC_SCRATCH37);

@@ -511,6 +511,15 @@ config TEGRA_CLUSTER_CONTROL
 	depends on ARCH_TEGRA_HAS_DUAL_CPU_CLUSTERS
 	default y if PM_SLEEP
 
+config TEGRA_MPDECISION
+        bool "Enable better automatic CPU hot-plugging"
+	depends on HOTPLUG_CPU && CPU_FREQ && !ARCH_CPU_PROBE_RELEASE && !ARCH_TEGRA_2x_SOC
+	default y
+	help
+	  This option enables turning CPUs off/on and switching tegra
+	  high/low power CPU clusters automatically, corresponding to
+	  CPU frequency load.
+
 config TEGRA_AUTO_HOTPLUG
 	bool "Enable automatic CPU hot-plugging"
 	depends on HOTPLUG_CPU && CPU_FREQ && !ARCH_CPU_PROBE_RELEASE && !ARCH_TEGRA_2x_SOC
@@ -519,6 +528,17 @@ config TEGRA_AUTO_HOTPLUG
 	  This option enables turning CPUs off/on and switching tegra
 	  high/low power CPU clusters automatically, corresponding to
 	  CPU frequency scaling.
+
+config BEST_TRADE_HOTPLUG
+	bool "Hotplug depends on power-performance tradeoff"
+	depends on HOTPLUG_CPU && SMP
+	default n
+	help
+	  This option enables making decision of CPU hotplug
+	  bases on the tradeoff between power vs. performance.
+	  A good trade would retain overall system performance,
+	  as well as save battery life.
+
 
 config TEGRA_MC_EARLY_ACK
 	bool "Enable early acknowledgement from mermory controller"
@@ -553,6 +573,13 @@ config TEGRA_EMC_TO_DDR_CLOCK
 	default "2" if ARCH_TEGRA_2x_SOC
 	default "1"
 
+config TEGRA_INTERACTIVE_GOV_ON_EARLY_SUSPEND
+	bool "Use interactive cpu frequency governor when device enters early suspend"
+	depends on HAS_EARLYSUSPEND && CPU_FREQ && !TEGRA_CONSERVATIVE_GOV_ON_EARLY_SUSPEND
+	default y
+	help
+	 Also will restore to original cpu frequency governor when device is resumed
+
 config TEGRA_SE_ON_CBUS
 	bool "To Drive SE clock from cbus"
 	default y
@@ -562,6 +589,13 @@ config TEGRA_SE_ON_CBUS
 config TEGRA_CBUS_CLOCK_DIVIDER
         int "CBUS clock divider"
         default "2"
+
+config TEGRA_CONVSERVATIVE_GOV_ON_EARLYSUPSEND
+	bool "Use conservative cpu frequency governor when device enters early suspend"
+	depends on HAS_EARLYSUSPEND && CPU_FREQ
+	default n
+	help
+	 Also will restore to original cpu frequency governor when device is resumed
 
 config TEGRA_RUNNABLE_THREAD
 	bool "Tegra3 runnable thread hotplug"
@@ -644,6 +678,13 @@ config REMOVE_HSIC_L3_STATE
 	default n
 	help
 	  Remove HSIC L3 suspend state.
+
+config TEGRA_LP1_950
+	bool "LP1 low core voltage"
+	default n
+	depends on ARCH_TEGRA_3x_SOC
+	help
+	  Enable support for LP1 Core voltage to set to lowest
 
 config HTC_HEADSET_MGR
 	tristate "HTC headset manager driver"
@@ -732,12 +773,6 @@ config ANDROID_RAM_CONSOLE_APPEND_PMIC_STATUS_BITS
 	  Append PMIC status bits to end of /proc/last_kmsg for
 	  checking the boot / reset reason in detail
 
-config CMDLINE_OPTIONS
-	bool "Enable cmdline options command parsing"
-	default n
-	help
-	  This enables the parsing of cmdline options.
-
 config TEGRA_LP2_ARM_TWD
 	bool
 
@@ -824,13 +859,6 @@ config TEGRA_SKIN_THROTTLE
 	help
 	  Enable throttling to control the temperature of the skin/case
 	  of the device.
-
-config TEGRA_LP1_950
-	bool "LP1 low core voltage"
-	default n
-	depends on ARCH_TEGRA_3x_SOC
-	help
-		Enable support for LP1 Core voltage to set to lowest
 endif
 
 config RIL_FTRACE_DEBUG_SOCK_IOCTL
@@ -844,13 +872,6 @@ config SENSE_4_PLUS
 	bool "SENSE 4 PLUS"
 	help
 	  Support for SENSE 4 PLUS.
-
-config BUILD_FOR_SENSE
-	depends on ARCH_TEGRA_3x_SOC
-	bool "Enable special things for Sense ROMs"
-	help
-	  This will make the kernel more compatible with Sense based ROMs.
-
 
 config MEMORY_FOOTPRINT_DEBUGGING
 	bool "footprint for debugging"

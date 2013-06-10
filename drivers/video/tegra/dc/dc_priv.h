@@ -92,6 +92,11 @@ struct tegra_dc_out_ops {
 	void (*send_cmd)(struct tegra_dc *dc, struct tegra_dsi_cmd *cmd, int n);
 };
 
+struct tegra_dc_shift_clk_div {
+	unsigned long mul; /* numerator */
+	unsigned long div; /* denominator */
+};
+
 struct tegra_dc {
 	struct nvhost_device		*ndev;
 	struct tegra_dc_platform_data	*pdata;
@@ -104,7 +109,7 @@ struct tegra_dc {
 	struct clk			*emc_clk;
 	int				emc_clk_rate;
 	int				new_emc_clk_rate;
-	u32				shift_clk_div;
+	struct tegra_dc_shift_clk_div	shift_clk_div;
 
 	bool				connected;
 	bool				enabled;
@@ -119,7 +124,9 @@ struct tegra_dc {
 	struct tegra_dc_win		windows[DC_N_WINDOWS];
 	struct tegra_dc_blend		blend;
 	int				n_windows;
-
+#ifdef CONFIG_TEGRA_DC_CMU
+	struct tegra_dc_cmu		cmu;
+#endif
 	wait_queue_head_t		wq;
 
 	struct mutex			lock;
@@ -255,6 +262,7 @@ static inline int tegra_dc_fmt_bpp(int fmt)
 {
 	switch (fmt) {
 	case TEGRA_WIN_FMT_P1:
+
 		return 1;
 
 	case TEGRA_WIN_FMT_P2:
@@ -412,4 +420,11 @@ void tegra_dc_set_csc(struct tegra_dc *dc, struct tegra_dc_csc *csc);
 
 /* defined in window.c, used in dc.c */
 void tegra_dc_trigger_windows(struct tegra_dc *dc);
+
+void tegra_dc_set_color_control(struct tegra_dc *dc);
+#ifdef CONFIG_TEGRA_DC_CMU
+void tegra_dc_cmu_enable(struct tegra_dc *dc, bool cmu_enable);
+int tegra_dc_update_cmu(struct tegra_dc *dc, struct tegra_dc_cmu *cmu);
+#endif
+
 #endif

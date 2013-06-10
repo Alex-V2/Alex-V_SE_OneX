@@ -48,8 +48,9 @@
 #define AHB_MEM_PREFETCH_CFG2		0xf0
 #define PREFETCH_ENB			(1 << 31)
 
-#define DEBUG
-#ifdef DEBUG
+#define DEBUG 0
+
+#if DEBUG
 #define DBG(stuff...)		pr_info("usb_phy: " stuff)
 #else
 #define DBG(stuff...)		do {} while (0)
@@ -336,6 +337,7 @@ struct tegra_usb_phy *tegra_usb_phy_open(struct platform_device *pdev)
 				 instance : %d\n", PTR_ERR(phy->vbus_reg),
 								phy->inst);
 				err = PTR_ERR(phy->vbus_reg);
+				phy->vbus_reg = NULL;
 				goto fail_init;
 			}
 		} else {

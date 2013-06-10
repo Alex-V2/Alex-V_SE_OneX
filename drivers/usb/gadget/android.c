@@ -35,8 +35,9 @@
 #include <linux/usb/android_composite.h>//htc
 #include <linux/wakelock.h>
 #include "gadget_chips.h"
-#include "../../../arch/arm/mach-tegra/tegra_pmqos.h"
 
+
+#define PM_QOS_USB_TP_CPU_FREQ 910
 static struct pm_qos_request_list pm_qos_req_tp;
 
 enum {
@@ -245,6 +246,13 @@ void network_pm_qos_update_latency(int vote)
 
 	if (vote == last_vote)
 		return;
+
+	if (vote) {
+		pm_qos_update_request(&pm_qos_req_tp, (s32)PM_QOS_USB_TP_CPU_FREQ * 1000);
+	} else {
+		pm_qos_update_request(&pm_qos_req_tp, (s32)PM_QOS_CPU_FREQ_MIN_DEFAULT_VALUE);
+	}
+	last_vote = vote;
 }
 static void android_pm_qos_update_latency(struct android_dev *dev, int vote)
 {
@@ -1313,9 +1321,15 @@ static int mass_storage_function_init(struct android_usb_function *f,
 		if (config->fsg.nluns > FSG_MAX_LUNS)
 			config->fsg.nluns = FSG_MAX_LUNS;
 		for (i = 0; i < config->fsg.nluns; i++) {
+			if (dev->pdata->cdrom_lun & (1 << i)) {
+				config->fsg.luns[i].cdrom = 1;
+				config->fsg.luns[i].removable = 1;
+				config->fsg.luns[i].ro = 1;
+			} else {
 				config->fsg.luns[i].cdrom = 0;
 				config->fsg.luns[i].removable = 1;
 				config->fsg.luns[i].ro = 0;
+			}
 		}
 	} else {
 		/* default value */

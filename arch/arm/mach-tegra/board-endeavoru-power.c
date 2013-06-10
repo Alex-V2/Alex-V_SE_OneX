@@ -55,9 +55,6 @@
 #endif
 #include <linux/tps80032_charger.h>
 #include <linux/tps80032_gauge.h>
-#include "tegra_pmqos.h"
-
-unsigned int tegra_pmqos_boost_freq = BOOST_CPU_FREQ_MIN;
 
 #define PMC_CTRL		0x0
 #define PMC_CTRL_INTR_LOW	(1 << 17)
@@ -706,6 +703,8 @@ static struct tegra_suspend_platform_data endeavoru_suspend_data = {
 	.sysclkreq_high	= true,
 	.board_suspend = endeavoru_board_suspend,
 	.board_resume = endeavoru_board_resume,
+	.cpu_resume_boost	= 1500000,
+	.boost_resume_reason	= 0x80,
 #ifdef CONFIG_TEGRA_LP1_950
 	.lp1_lowvolt_support = true,
 	.i2c_base_addr = TEGRA_I2C5_BASE,
@@ -714,8 +713,6 @@ static struct tegra_suspend_platform_data endeavoru_suspend_data = {
 	.lp1_core_volt_low = 0x1D,
 	.lp1_core_volt_high = 0x33,
 #endif
-	.cpu_resume_boost	= 1500000,
-	.boost_resume_reason	= 0x80,
 };
 
 int __init endeavoru_suspend_init(void)

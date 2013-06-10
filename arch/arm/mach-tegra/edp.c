@@ -26,8 +26,6 @@
 #include <mach/edp.h>
 
 #include "fuse.h"
-#include "tegra_pmqos.h"
-
 
 static const struct tegra_edp_limits *edp_limits;
 static struct tegra_edp_limits *default_table;
@@ -341,13 +339,11 @@ static unsigned int edp_limits_table[EDP_LIMITS_TABLE_SIZE];
 void __init tegra_init_cpu_edp_limits(unsigned int regulator_mA)
 {
 	int cpu_speedo_id = tegra_cpu_speedo_id();
-	int cpu_process_id = tegra_cpu_process_id();
 	int i, j;
 	struct tegra_edp_limits *e;
 	struct tegra_edp_limits *f;
 	struct tegra_edp_entry *t = (struct tegra_edp_entry *)tegra_edp_map;
 	int tsize = sizeof(tegra_edp_map)/sizeof(struct tegra_edp_entry);
-	int edpboost;
 
 	if (!regulator_mA) {
 		edp_limits = edp_default_limits;
@@ -381,25 +377,12 @@ void __init tegra_init_cpu_edp_limits(unsigned int regulator_mA)
 		    GFP_KERNEL);
 	BUG_ON(!e);
 
-	switch (cpu_process_id) {
-		case 4:
-		case 3:
-		case 2:
-                case 1:
-		case 0:
-			edpboost = T3_EDP_BOOST;
-			break;
-		default:
-			edpboost = 0;
-			break;
-	}
-
 	for (j = 0; j < edp_limits_size; j++) {
 		e[j].temperature = (int)t[i+j].temperature;
-		e[j].freq_limits[0] = (unsigned int)(t[i+j].freq_limits[0]+edpboost) * 10000;
-		e[j].freq_limits[1] = (unsigned int)(t[i+j].freq_limits[1]+edpboost+10) * 10000;
-		e[j].freq_limits[2] = (unsigned int)(t[i+j].freq_limits[2]+edpboost+10) * 10000;
-		e[j].freq_limits[3] = (unsigned int)(t[i+j].freq_limits[3]+edpboost+10) * 10000;
+		e[j].freq_limits[0] = (unsigned int)t[i+j].freq_limits[0] * 10000;
+		e[j].freq_limits[1] = (unsigned int)t[i+j].freq_limits[1] * 10000;
+		e[j].freq_limits[2] = (unsigned int)t[i+j].freq_limits[2] * 10000;
+		e[j].freq_limits[3] = (unsigned int)t[i+j].freq_limits[3] * 10000;
 	}
 
 	f = kmalloc(sizeof(struct tegra_edp_limits) * edp_limits_size,

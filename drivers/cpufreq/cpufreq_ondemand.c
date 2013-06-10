@@ -34,7 +34,7 @@
  * Just backport Interactive trace points for Ondemand governor use
  */
 #define CREATE_TRACE_POINTS
-#include <trace/events/cpufreq_ondemand.h>
+#include <trace/events/cpufreq_interactive.h>
 
 /*
  * dbs is used in this file as a shortform for demandbased switching
@@ -391,7 +391,7 @@ static ssize_t store_two_phase_bottom_freq (
 }
 #endif
 
-static unsigned int Touch_poke_attr[4] = {1500000, 880000, 0, 0};
+static unsigned int Touch_poke_attr[4] = {1550000, 880000, 0, 0};
 
 static ssize_t store_touch_poke(struct kobject *a, struct attribute *b,
 				   const char *buf, size_t count)
@@ -681,12 +681,12 @@ static void dbs_freq_increase(struct cpufreq_policy *p, unsigned int load, unsig
 	//else if (p->cur == p->max)
 	//	return;
 
-    trace_cpufreq_ondemand_target (p->cpu, load, p->cur, freq);
+    trace_cpufreq_interactive_target (p->cpu, load, p->cur, freq);
 
 	__cpufreq_driver_target(p, freq, dbs_tuners_ins.powersave_bias ?
 			CPUFREQ_RELATION_L : CPUFREQ_RELATION_H);
 
-    trace_cpufreq_ondemand_up (p->cpu, freq, p->cur);
+    trace_cpufreq_interactive_up (p->cpu, freq, p->cur);
 }
 
 static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
@@ -934,7 +934,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	}
 
     if (time_before64 (now, dbs_tuners_ins.floor_valid_time)) {
-        trace_cpufreq_ondemand_notyet (policy->cpu,
+        trace_cpufreq_interactive_notyet (policy->cpu,
                                           debug_load,
                                           policy->cur,
                                           policy->cur);
@@ -953,7 +953,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 	/* Check for frequency decrease */
 	/* if we cannot reduce the frequency anymore, break out early */
 	if (policy->cur == policy->min) {
-        trace_cpufreq_ondemand_already (policy->cpu,
+        trace_cpufreq_interactive_already (policy->cpu,
                                            debug_load,
                                            policy->cur,
                                            policy->cur);
@@ -987,7 +987,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 		if (!dbs_tuners_ins.powersave_bias) {
 			debug_freq = freq_next;
 
-            trace_cpufreq_ondemand_target (policy->cpu,
+            trace_cpufreq_interactive_target (policy->cpu,
                                               debug_load,
                                               policy->cur,
                                               freq_next);
@@ -999,7 +999,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 					CPUFREQ_RELATION_L);
 			debug_freq = freq;
 
-            trace_cpufreq_ondemand_target (policy->cpu,
+            trace_cpufreq_interactive_target (policy->cpu,
                                               debug_load,
                                               policy->cur,
                                               freq);
@@ -1008,7 +1008,7 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
 				CPUFREQ_RELATION_L);
 		}
 
-        trace_cpufreq_ondemand_down (policy->cpu, debug_freq, policy->cur);
+        trace_cpufreq_interactive_down (policy->cpu, debug_freq, policy->cur);
 
 #ifdef CONFIG_CPU_FREQ_GOV_ONDEMAND_2_PHASE
         CPU_DEBUG_PRINTK(CPU_DEBUG_GOVERNOR,
@@ -1223,6 +1223,12 @@ static void dbs_refresh_callback_ondemand(struct work_struct *unused)
 	unlock_policy_rwsem_write(cpu);
 }
 
+#if defined(CONFIG_BEST_TRADE_HOTPLUG)
+extern void bthp_set_floor_cap (unsigned int floor_freq,
+                                cputime64_t floor_time
+                                );
+#endif
+
 static DECLARE_WORK(dbs_refresh_work, dbs_refresh_callback_ondemand);
 
 extern
@@ -1266,6 +1272,11 @@ static int cpufreq_ondemand_input_boost_task (
         dbs_tuners_ins.floor_freq = touch_poke_freq;
         dbs_tuners_ins.floor_valid_time =
             ktime_to_ns(ktime_get()) + dbs_tuners_ins.input_boost_duration;
+
+#if defined(CONFIG_BEST_TRADE_HOTPLUG)
+        bthp_set_floor_cap (dbs_tuners_ins.floor_freq,
+                            dbs_tuners_ins.floor_valid_time);
+#endif
 
         if (lock_policy_rwsem_write(cpu) < 0)
             continue;

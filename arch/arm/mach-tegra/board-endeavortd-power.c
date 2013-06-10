@@ -699,14 +699,6 @@ static struct tegra_suspend_platform_data endeavortd_suspend_data = {
 	.sysclkreq_high	= true,
 	.board_suspend = endeavortd_board_suspend,
 	.board_resume = endeavortd_board_resume,
-#ifdef CONFIG_TEGRA_LP1_950
-	.lp1_lowvolt_support = true,
-	.i2c_base_addr = TEGRA_I2C5_BASE,
-	.pmuslave_addr = 0x24,
-	.core_reg_addr = 0x5B,
-	.lp1_core_volt_low = 0x1D,
-	.lp1_core_volt_high = 0x33,
-#endif
 	.cpu_resume_boost	= 1500000,
 	.boost_resume_reason	= 0x80,
 };

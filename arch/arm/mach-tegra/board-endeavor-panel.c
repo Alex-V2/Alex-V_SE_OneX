@@ -177,7 +177,7 @@ static struct platform_tegra_pwm_backlight_data endeavor_disp1_backlight_data = 
 	.gpio_conf_to_sfio	= TEGRA_GPIO_PW1,
 	.switch_to_sfio		= &tegra_gpio_disable,
 	.max_brightness		= 255,
-	.dft_brightness		= 85,
+	.dft_brightness		= 142,
 	.notify		= endeavor_backlight_notify,
 	.period			= 0xFF,
 	.clk_div		= 20,
@@ -289,13 +289,24 @@ static struct resource endeavor_disp2_resources[] = {
 };
 
 static struct tegra_dc_sd_settings endeavor_sd_settings = {
-	.enable = 1, /* Normal mode operation */
+	.enable = 0, /* Disable */
 	.use_auto_pwm = false,
 	.hw_update_delay = 0,
 	.bin_width = -1,
 	.aggressiveness = 1,
 	.phase_in_adjustments = true,
 	.use_vid_luma = false,
+#ifdef CONFIG_TEGRA_SD_GEN2
+	.k_limit_enable = true,
+	.k_limit = 200,
+	.sd_window_enable = false,
+	.soft_clipping_enable = true,
+	/* Low soft clipping threshold to compensate for aggressive k_limit */
+	.soft_clipping_threshold = 128,
+	.smooth_k_enable = true,
+	.smooth_k_incr = 4,
+#endif
+	
 	/* Default video coefficients */
 	.coeff = {5, 9, 2},
 	.fc = {0, 0},
@@ -4513,7 +4524,7 @@ int __init endeavor_panel_init(void)
 				ARRAY_SIZE(endeavor_bl_devices));
 	INIT_WORK(&bkl_work, bkl_do_work);
 	bkl_wq = create_workqueue("bkl_wq");
-	setup_timer(&bkl_timer, bkl_update, 0);
+	setup_timer(&bkl_timer, bkl_update, NULL);
 
 failed:
 	DISP_INFO_OUT();

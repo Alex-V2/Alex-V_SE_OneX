@@ -146,7 +146,7 @@ extern unsigned long this_cpu_load(void);
 
 
 extern void calc_global_load(unsigned long ticks);
-
+extern void prepare_idle_mask(unsigned long ticks);
 extern unsigned long get_parent_ip(unsigned long addr);
 
 struct seq_file;
@@ -960,6 +960,7 @@ struct sched_group_power {
 	 * single CPU.
 	 */
 	unsigned int power, power_orig;
+	unsigned long next_update;
 };
 
 struct sched_group {
@@ -2050,6 +2051,8 @@ extern void wake_up_idle_cpu(int cpu);
 #else
 static inline void wake_up_idle_cpu(int cpu) { }
 #endif
+
+extern void force_cpu_resched(int cpu);
 
 extern unsigned int sysctl_sched_latency;
 extern unsigned int sysctl_sched_min_granularity;

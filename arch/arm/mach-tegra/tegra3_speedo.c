@@ -20,6 +20,8 @@
 
 #include <linux/kernel.h>
 #include <linux/io.h>
+#include <linux/seq_file.h>
+#include <linux/debugfs.h>
 #include <linux/err.h>
 #include <mach/iomap.h>
 #include <mach/tegra_fuse.h>
@@ -110,8 +112,8 @@ static const u32 cpu_process_speedos[][CPU_PROCESS_CORNERS_NUM] = {
 
 /* T30 Automotives */
 	/* threshold_index 12: cpu_speedo_id 9 & 10
-	 * 0,1,2 values correspond to speedo_id  9
-	 * 3,4,5 values correspond to speedo_id 10 */
+	 * 0,1,2 values correspond to speedo_id  9/14
+	 * 3,4,5 values correspond to speedo_id 10/15*/
 	{300, 311, 360, 371, 381, 415, 431},
 	{300, 311, 410, 431, UINT_MAX}, /* [13]: cpu_speedo_id 11: T30 auto */
 
@@ -470,10 +472,31 @@ void tegra_init_speedo_data(void)
 		soc_speedo_id = 1;
 	}
 	if (threshold_index == 12 && cpu_process_id != INVALID_PROCESS_ID) {
-		if (cpu_process_id <= 2)
-			cpu_speedo_id = 9;
-		else if (cpu_process_id >= 3 && cpu_process_id < 6)
-			cpu_speedo_id = 10;
+		if (cpu_process_id <= 2) {
+			switch(fuse_sku) {
+			case 0xb0:
+			case 0xb1:
+				cpu_speedo_id = 9;
+				break;
+			case 0x90:
+			case 0x91:
+				cpu_speedo_id = 14;
+			default:
+				break;
+			}
+		} else if (cpu_process_id >= 3 && cpu_process_id < 6) {
+			switch(fuse_sku) {
+			case 0xb0:
+			case 0xb1:
+				cpu_speedo_id = 10;
+				break;
+			case 0x90:
+			case 0x91:
+				cpu_speedo_id = 15;
+			default:
+				break;
+			}
+		}
 	}
 	pr_info("Tegra3: CPU Speedo ID %d, Soc Speedo ID %d",
 		 cpu_speedo_id, soc_speedo_id);
@@ -518,9 +541,8 @@ int tegra_package_id(void)
  * latter is resolved by the dvfs code)
  */
 static const int cpu_speedo_nominal_millivolts[] =
-/* speedo_id
-             0,    1,    2,    3,    4,    5,    6,    7,    8,    9,  10,  11,   12,  13 */
-	{ 1125, 1150, 1150, 1150, 1237, 1237, 1237, 1237, 1150, 912, 850, 850, 1237, 1240};
+/*              0,    1,    2,    3,    4,    5,    6,    7,    8,    9,  10,  11,   12,  13 */ 
+	{ 1125, 1150, 1150, 1150, 1237, 1237, 1237, 1150, 1150, 1007, 916, 850, 1237, 1237}; 
 
 int tegra_cpu_speedo_mv(void)
 {
@@ -534,10 +556,8 @@ int tegra_core_speedo_mv(void)
 	case 0:
 		return 1200;
 	case 1:
-		if (cpu_speedo_id == 13)
-			return 1250;
 		if ((cpu_speedo_id != 7) && (cpu_speedo_id != 8))
-			return 1250;
+			return 1200;
 		/* fall thru for T30L or T30SL */
 	case 2:
 		if (cpu_speedo_id != 13)
@@ -559,6 +579,44 @@ static int get_enable_app_profiles(char *val, const struct kernel_param *kp)
 static struct kernel_param_ops tegra_profiles_ops = {
 	.get = get_enable_app_profiles,
 };
+
+#ifdef CONFIG_DEBUG_FS
+static int t3_variant_debugfs_show(struct seq_file *s, void *data)
+{
+	seq_printf(s, "cpu_speedo_id => %d\n", cpu_speedo_id);
+	seq_printf(s, "soc_speedo_id => %d\n", soc_speedo_id);
+	seq_printf(s, "cpu_process_id => %d\n", cpu_process_id);
+	seq_printf(s, "core_process_id => %d\n", core_process_id);
+
+	return 0;
+}
+
+static int t3_variant_debugfs_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, t3_variant_debugfs_show, inode->i_private);
+}
+
+static const struct file_operations t3_variant_debugfs_fops = {
+	.open		= t3_variant_debugfs_open,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+};
+
+static int __init tegra_variant_debugfs_init(void)
+{
+	struct dentry *d;
+
+	d = debugfs_create_file("t3_variant", S_IRUGO, NULL, NULL,
+				&t3_variant_debugfs_fops);
+	if (!d)
+		return -ENOMEM;
+
+	return 0;
+}
+
+late_initcall(tegra_variant_debugfs_init);
+#endif /* CONFIG_DEBUG_FS */
 
 module_param_cb(tegra_enable_app_profiles,
 	&tegra_profiles_ops, &enable_app_profiles, 0444);

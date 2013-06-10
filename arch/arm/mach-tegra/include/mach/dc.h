@@ -91,6 +91,16 @@ struct tegra_dsi_cmd {
 	u8	*pdata;
 };
 
+#define DSI_GENERIC_LONG_WRITE			0x29
+#define DSI_GENERIC_SHORT_WRITE_1_PARAMS	0x13
+#define DSI_GENERIC_SHORT_WRITE_2_PARAMS	0x23
+#define DSI_DCS_WRITE_0_PARAM			0x05
+#define DSI_DCS_WRITE_1_PARAM			0x15
+
+#define DSI_DCS_SET_TEARING_EFFECT_OFF		0x34
+#define DSI_DCS_SET_TEARING_EFFECT_ON		0x35
+#define DSI_DCS_NO_OP				0x0
+
 #define DSI_CMD_SHORT(di, p0, p1)	{ \
 					.cmd_type = TEGRA_DSI_PACKET_CMD, \
 					.data_id = di, \
@@ -291,6 +301,13 @@ struct tegra_dc_sd_agg_priorities {
 	u8 agg[4];
 };
 
+struct tegra_dc_sd_window {
+	u16 h_position;
+	u16 v_position;
+	u16 h_size;
+	u16 v_size;
+};
+
 struct tegra_dc_sd_settings {
 	unsigned enable;
 	bool use_auto_pwm;
@@ -310,6 +327,22 @@ struct tegra_dc_sd_settings {
 
 	bool use_vid_luma;
 	struct tegra_dc_sd_rgb coeff;
+
+	bool k_limit_enable;
+	u16 k_limit;
+
+	bool sd_window_enable;
+	struct tegra_dc_sd_window sd_window;
+
+	bool soft_clipping_enable;
+	u8 soft_clipping_threshold;
+
+	bool smooth_k_enable;
+	u16 smooth_k_incr;
+
+	bool sd_proc_control;
+	bool soft_clipping_correction;
+	bool use_vpulse2;
 
 	struct tegra_dc_sd_fc fc;
 	struct tegra_dc_sd_blp blp;
@@ -385,6 +418,7 @@ struct tegra_dc_out {
 
 	int power_wakeup;
 	int performance_tuning;
+
 	int video_min_bw;
 
 	int	(*enable)(void);
@@ -440,6 +474,24 @@ struct tegra_dc_lut {
 	u8 b[256];
 };
 
+struct tegra_dc_cmu_csc {
+	u16 krr;
+	u16 kgr;
+	u16 kbr;
+	u16 krg;
+	u16 kgg;
+	u16 kbg;
+	u16 krb;
+	u16 kgb;
+	u16 kbb;
+};
+
+struct tegra_dc_cmu {
+	u16 lut1[256];
+	struct tegra_dc_cmu_csc csc;
+	u8 lut2[960];
+};
+
 struct tegra_dc_win {
 	u8			idx;
 	u8			fmt;
@@ -486,6 +538,7 @@ struct tegra_dc_win {
 #define TEGRA_WIN_FLAG_TILED		(1 << 5)
 #define TEGRA_WIN_FLAG_H_FILTER		(1 << 6)
 #define TEGRA_WIN_FLAG_V_FILTER		(1 << 7)
+#define TEGRA_WIN_FLAG_SCAN_COLUMN	(1 << 9)
 
 
 #define TEGRA_WIN_BLEND_FLAGS_MASK \
@@ -534,9 +587,16 @@ struct tegra_dc_platform_data {
 	unsigned long		emc_clk_rate;
 	struct tegra_dc_out	*default_out;
 	struct tegra_fb_data	*fb;
+
+#ifdef CONFIG_TEGRA_DC_CMU
+	bool			cmu_enable;
+	struct tegra_dc_cmu	*cmu;
+#endif
 };
 
 #define TEGRA_DC_FLAG_ENABLED		(1 << 0)
+#define TEGRA_DC_FLAG_CMU_DISABLE	(0 << 1)
+#define TEGRA_DC_FLAG_CMU_ENABLE	(1 << 1)
 
 int tegra_dc_get_stride(struct tegra_dc *dc, unsigned win);
 struct tegra_dc *tegra_dc_get_dc(unsigned idx);
@@ -615,10 +675,5 @@ int tegra_dc_set_flip_callback(void (*callback)(void));
 int tegra_dc_unset_flip_callback(void);
 int tegra_dc_get_panel_sync_rate(void);
 int tegra_dc_get_frame_time(void);
-
-#ifdef trace_printk
-#undef trace_printk
-#endif
-#define trace_printk
 
 #endif

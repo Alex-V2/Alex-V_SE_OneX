@@ -857,7 +857,7 @@ static int tegra3_cpu_clk_set_rate(struct clk *c, unsigned long rate)
 			return -ENOSYS;
 		else if ((!c->dvfs->dvfs_rail->reg) &&
 			  (clk_get_rate_locked(c) < rate)) {
-			pr_debug("Increasing CPU rate while regulator is not"
+			WARN(1, "Increasing CPU rate while regulator is not"
 				" ready may overclock CPU\n");
 			return -ENOSYS;
 		}
@@ -923,6 +923,31 @@ static int tegra3_cpu_clk_set_rate(struct clk *c, unsigned long rate)
 		pr_err("Failed to switch cpu to clock %s\n", c->u.cpu.main->name);
 		goto out;
 	}
+
+#if defined(CONFIG_BEST_TRADE_HOTPLUG)
+    {
+        extern unsigned long *t_rate;
+        extern bool is_bthp_en (void);
+
+        if (likely(is_bthp_en ())) {
+            atomic_set((atomic_t *)&lt_rate, rate / 1000);
+            barrier();
+
+            /* for NV platform, all G cores consume the same clk source
+             *
+             * to port to any othe platforms,
+             * pls. modify t_rate to t_rate[NR_CPUS] accordingly
+             */
+            if (unlikely(!atomic_cmpxchg ((atomic_t *)&t_rate,
+                                          (int)NULL,
+                                          (int)&lt_rate)))
+            {
+                pr_bthp_info ("lt_rate is skirted...\n");
+            }
+        }
+    }
+#endif
+
 out:
 	if (skipped) {
 		udelay(skipper_delay);
@@ -1050,9 +1075,9 @@ static int tegra3_cpu_cmplx_clk_set_parent(struct clk *c, struct clk *p)
 		if (p == c->parent)		/* already switched - exit*/
 			return 0;
 
-		if ((rate > p->max_rate) || (rate < p->min_rate)) {
-			pr_warn("%s: No %s mode switch to %s at rate %lu\n",
-				 __func__, c->name, p->name, rate);
+		if (rate > p->max_rate) {	/* over-clocking - no switch */
+			pr_warn("%s: No %s mode switch to %s at rate %lu max rate %lu\n",
+				 __func__, c->name, p->name, rate, p->max_rate);
 			return -ECANCELED;
 		}
 		flags = TEGRA_POWER_CLUSTER_IMMEDIATE;
@@ -1733,10 +1758,12 @@ static int tegra3_pll_clk_set_rate(struct clk *c, unsigned long rate)
 	if (val == old_base)
 		return 0;
 
+	MF_DEBUG("00000000");
 	if (c->state == ON) {
 		tegra3_pll_clk_disable(c);
 		val &= ~(PLL_BASE_BYPASS | PLL_BASE_ENABLE);
 	}
+	MF_DEBUG("00000001");
 
 	unsigned long flags;
 	if (c->reg == 0xd0)
@@ -1745,6 +1772,7 @@ static int tegra3_pll_clk_set_rate(struct clk *c, unsigned long rate)
 	if (c->reg == 0xd0)
 		spin_unlock_irqrestore(&dc_spinlock_clk, flags);
 
+	MF_DEBUG("00000002");
 	if (c->flags & PLL_HAS_CPCON) {
 		val = clk_readl(c->reg + PLL_MISC(c));
 		val &= ~PLL_MISC_CPCON_MASK;
@@ -1764,6 +1792,7 @@ static int tegra3_pll_clk_set_rate(struct clk *c, unsigned long rate)
 	if (c->state == ON)
 		tegra3_pll_clk_enable(c);
 
+	MF_DEBUG("00000003");
 	return 0;
 }
 
@@ -3041,11 +3070,11 @@ static noinline int shared_bus_set_rate(struct clk *bus, unsigned long rate,
 
 	mv = tegra_dvfs_predict_millivolts(bus, rate);
 	old_mv = tegra_dvfs_predict_millivolts(bus, old_rate);
-	if (IS_ERR_VALUE(mv) || IS_ERR_VALUE(old_mv)) {
+	/*if (IS_ERR_VALUE(mv) || IS_ERR_VALUE(old_mv)) {
 		pr_err("%s: Failed to predict %s voltage for %lu => %lu\n",
 		       __func__, bus->name, old_rate, rate);
 		return -EINVAL;
-	}
+	}*/
 
 	/* emc bus: set bridge rate as intermediate step when crossing
 	 * bridge threshold in any direction
@@ -3643,60 +3672,60 @@ static struct clk tegra_pll_u = {
 };
 
 static struct clk_pll_freq_table tegra_pll_x_freq_table[] = {
-	/* 1.7 GHz */
-	{ 12000000, 1700000000, 850,  6,  1, 8},
-	{ 13000000, 1700000000, 915,  7,  1, 8},	/* actual: 1699.2 MHz */
-	{ 16800000, 1700000000, 708,  7,  1, 8},	/* actual: 1699.2 MHz */
-	{ 19200000, 1700000000, 885,  10, 1, 8},	/* actual: 1699.2 MHz */
-	{ 26000000, 1700000000, 850,  13, 1, 8},
+/* 1.7 GHz */
+	{ 12000000, 1700000000, 850, 6, 1, 8},
+	{ 13000000, 1700000000, 915, 7, 1, 8}, /* actual: 1699.2 MHz */
+	{ 16800000, 1700000000, 708, 7, 1, 8}, /* actual: 1699.2 MHz */
+	{ 19200000, 1700000000, 885, 10, 1, 8}, /* actual: 1699.2 MHz */
+	{ 26000000, 1700000000, 850, 13, 1, 8},
 
-	/* 1.6 GHz */
-	{ 12000000, 1600000000, 800,  6,  1, 8},
-	{ 13000000, 1600000000, 738,  6,  1, 8},	/* actual: 1599.0 MHz */
-	{ 16800000, 1600000000, 857,  9,  1, 8},	/* actual: 1599.7 MHz */
-	{ 19200000, 1600000000, 500,  6,  1, 8},
-	{ 26000000, 1600000000, 800,  13, 1, 8},
+/* 1.6 GHz */
+	{ 12000000, 1600000000, 800, 6, 1, 8},
+	{ 13000000, 1600000000, 738, 6, 1, 8}, /* actual: 1599.0 MHz */
+	{ 16800000, 1600000000, 857, 9, 1, 8}, /* actual: 1599.7 MHz */
+	{ 19200000, 1600000000, 500, 6, 1, 8},
+	{ 26000000, 1600000000, 800, 13, 1, 8},
 
-	/* 1.5 GHz */
-	{ 12000000, 1500000000, 750,  6,  1, 8},
-	{ 13000000, 1500000000, 923,  8,  1, 8},	/* actual: 1499.8 MHz */
-	{ 16800000, 1500000000, 625,  7,  1, 8},
-	{ 19200000, 1500000000, 625,  8,  1, 8},
-	{ 26000000, 1500000000, 750,  13, 1, 8},
+/* 1.5 GHz */
+	{ 12000000, 1500000000, 750, 6, 1, 8},
+	{ 13000000, 1500000000, 923, 8, 1, 8}, /* actual: 1499.8 MHz */
+	{ 16800000, 1500000000, 625, 7, 1, 8},
+	{ 19200000, 1500000000, 625, 8, 1, 8},
+	{ 26000000, 1500000000, 750, 13, 1, 8},
 
-	/* 1.4 GHz */
-	{ 12000000, 1400000000, 700,  6,  1, 8},
-	{ 13000000, 1400000000, 969,  9,  1, 8},	/* actual: 1399.7 MHz */
+/* 1.4 GHz */
+	{ 12000000, 1400000000, 700, 6, 1, 8},
+	{ 13000000, 1400000000, 969, 9, 1, 8}, /* actual: 1399.7 MHz */
 	{ 16800000, 1400000000, 1000, 12, 1, 8},
-	{ 19200000, 1400000000, 875,  12, 1, 8},
-	{ 26000000, 1400000000, 700,  13, 1, 8},
+	{ 19200000, 1400000000, 875, 12, 1, 8},
+	{ 26000000, 1400000000, 700, 13, 1, 8},
 
-	/* 1.3 GHz */
-	{ 12000000, 1300000000, 975,  9,  1, 8},
+/* 1.3 GHz */
+	{ 12000000, 1300000000, 975, 9, 1, 8},
 	{ 13000000, 1300000000, 1000, 10, 1, 8},
-	{ 16800000, 1300000000, 928,  12, 1, 8},	/* actual: 1299.2 MHz */
-	{ 19200000, 1300000000, 812,  12, 1, 8},	/* actual: 1299.2 MHz */
-	{ 26000000, 1300000000, 650,  13, 1, 8},
+	{ 16800000, 1300000000, 928, 12, 1, 8}, /* actual: 1299.2 MHz */
+	{ 19200000, 1300000000, 812, 12, 1, 8}, /* actual: 1299.2 MHz */
+	{ 26000000, 1300000000, 650, 13, 1, 8},
 
-	/* 1.2 GHz */
+/* 1.2 GHz */
 	{ 12000000, 1200000000, 1000, 10, 1, 8},
-	{ 13000000, 1200000000, 923,  10, 1, 8},	/* actual: 1199.9 MHz */
+	{ 13000000, 1200000000, 923, 10, 1, 8}, /* actual: 1199.9 MHz */
 	{ 16800000, 1200000000, 1000, 14, 1, 8},
 	{ 19200000, 1200000000, 1000, 16, 1, 8},
-	{ 26000000, 1200000000, 600,  13, 1, 8},
+	{ 26000000, 1200000000, 600, 13, 1, 8},
 
-	/* 1.1 GHz */
-	{ 12000000, 1100000000, 825,  9,  1, 8},
-	{ 13000000, 1100000000, 846,  10, 1, 8},	/* actual: 1099.8 MHz */
-	{ 16800000, 1100000000, 982,  15, 1, 8},	/* actual: 1099.8 MHz */
-	{ 19200000, 1100000000, 859,  15, 1, 8},	/* actual: 1099.5 MHz */
-	{ 26000000, 1100000000, 550,  13, 1, 8},
+/* 1.1 GHz */
+	{ 12000000, 1100000000, 825, 9, 1, 8},
+	{ 13000000, 1100000000, 846, 10, 1, 8}, /* actual: 1099.8 MHz */
+	{ 16800000, 1100000000, 982, 15, 1, 8}, /* actual: 1099.8 MHz */
+	{ 19200000, 1100000000, 859, 15, 1, 8}, /* actual: 1099.5 MHz */
+	{ 26000000, 1100000000, 550, 13, 1, 8},
 
-	/* 1 GHz */
+/* 1 GHz */
 	{ 12000000, 1000000000, 1000, 12, 1, 8},
 	{ 13000000, 1000000000, 1000, 13, 1, 8},
-	{ 16800000, 1000000000, 833,  14, 1, 8},	/* actual: 999.6 MHz */
-	{ 19200000, 1000000000, 625,  12, 1, 8},
+	{ 16800000, 1000000000, 833, 14, 1, 8}, /* actual: 999.6 MHz */
+	{ 19200000, 1000000000, 625, 12, 1, 8},
 	{ 26000000, 1000000000, 1000, 26, 1, 8},
 
 	{ 0, 0, 0, 0, 0, 0 },
@@ -4765,8 +4794,8 @@ static struct cpufreq_frequency_table freq_table_300MHz[] = {
 };
 
 static struct cpufreq_frequency_table freq_table_1p0GHz[] = {
-	{ 0,  25500 },
-	{ 1,  51000 },
+	{ 0, 25500 },
+	{ 1, 51000 },
 	{ 2, 102000 },
 	{ 3, 204000 },
 	{ 4, 312000 },
@@ -4780,15 +4809,15 @@ static struct cpufreq_frequency_table freq_table_1p0GHz[] = {
 };
 
 static struct cpufreq_frequency_table freq_table_1p3GHz[] = {
-	{ 0,   25500 },
-	{ 1,   51000 },
-	{ 2,  102000 },
-	{ 3,  204000 },
-	{ 4,  340000 },
-	{ 5,  475000 },
-	{ 6,  640000 },
-	{ 7,  760000 },
-	{ 8,  860000 },
+	{ 0, 25500 },
+	{ 1, 51000 },
+	{ 2, 102000 },
+	{ 3, 204000 },
+	{ 4, 340000 },
+	{ 5, 475000 },
+	{ 6, 640000 },
+	{ 7, 760000 },
+	{ 8, 860000 },
 	{ 9, 1000000 },
 	{10, 1100000 },
 	{11, 1200000 },
@@ -4797,15 +4826,15 @@ static struct cpufreq_frequency_table freq_table_1p3GHz[] = {
 };
 
 static struct cpufreq_frequency_table freq_table_1p4GHz[] = {
-	{ 0,   25500 },
-	{ 1,   51000 },
-	{ 2,  102000 },
-	{ 3,  204000 },
-	{ 4,  370000 },
-	{ 5,  475000 },
-	{ 6,  620000 },
-	{ 7,  760000 },
-	{ 8,  860000 },
+	{ 0, 25500 },
+	{ 1, 51000 },
+	{ 2, 102000 },
+	{ 3, 204000 },
+	{ 4, 370000 },
+	{ 5, 475000 },
+	{ 6, 620000 },
+	{ 7, 760000 },
+	{ 8, 860000 },
 	{ 9, 1000000 },
 	{10, 1100000 },
 	{11, 1200000 },
@@ -4815,72 +4844,58 @@ static struct cpufreq_frequency_table freq_table_1p4GHz[] = {
 };
 
 static struct cpufreq_frequency_table freq_table_1p5GHz[] = {
-	{ 0,   25500 },
-	{ 1,   51000 },
-	{ 2,  102000 },
-	{ 3,  204000 },
-	{ 4,  340000 },
-	{ 5,  475000 },
-	{ 6,  640000 },
-	{ 7,  760000 },
-	{ 8,  860000 },
-	{ 9, 1000000 },
-	{10, 1100000 },
-	{11, 1200000 },
-	{12, 1300000 },
-	{13, 1400000 },
-	{14, 1500000 },
-	{15, CPUFREQ_TABLE_END },
-};
-
-static struct cpufreq_frequency_table freq_table_1p6GHz[] = {
-	{ 0,   25500 },
-	{ 1,   51000 },
-	{ 2,  102000 },
-	{ 3,  204000 },
-	{ 4,  340000 },
-	{ 5,  475000 },
-	{ 6,  640000 },
-	{ 7,  860000 },
-	{ 8, 1000000 },
-	{ 9, 1100000 },
-	{10, 1200000 },
-	{11, 1300000 },
-	{12, 1400000 },
-	{13, 1500000 },
-	{14, 1550000 },
-	{15, 1600000 },
-	{16, CPUFREQ_TABLE_END },
+	{ 0, 25500 },
+	{ 1, 51000 },
+	{ 2, 102000 },
+	{ 3, 204000 },
+	{ 4, 340000 },
+	{ 5, 475000 },
+	{ 6, 640000 },
+	{ 7, 760000 },
+	{ 8, 860000 },
+	{ 9, 910000 },
+	{10, 1000000 },
+	{11, 1100000 },
+	{12, 1150000 },
+	{13, 1200000 },
+	{14, 1300000 },
+	{15, 1400000 },
+	{16, 1500000 },
+	{17, 1550000 },
+	{18, CPUFREQ_TABLE_END },
 };
 
 static struct cpufreq_frequency_table freq_table_1p7GHz[] = {
-	{ 0,   25500 },
-	{ 1,   51000 },
-	{ 2,  102000 },
-	{ 3,  204000 },
-	{ 4,  340000 },
-	{ 5,  475000 },
-	{ 6,  640000 },
-	{ 7,  760000 },
-	{ 8,  910000 },
-	{ 9, 1000000 },
-	{10, 1150000 },
-	{11, 1300000 },
-	{12, 1400000 },
-	{13, 1500000 },
-	{14, 1600000 },
-	{15, 1700000 },
-	{16, CPUFREQ_TABLE_END },
+	{ 0, 25500 },
+	{ 1, 51000 },
+	{ 2, 102000 },
+	{ 3, 204000 },
+	{ 4, 340000 },
+	{ 5, 475000 },
+	{ 6, 640000 },
+	{ 7, 760000 },
+	{ 8, 860000 },
+	{ 9, 910000 },
+	{10, 1000000 },
+	{11, 1050000 },
+	{12, 1100000 },
+	{13, 1150000 },
+	{14, 1200000 },
+	{15, 1300000 },
+	{16, 1400000 },
+	{17, 1500000 },
+	{18, 1550000 },
+	{19, 1700000 },
+	{20, CPUFREQ_TABLE_END },
 };
 
 static struct tegra_cpufreq_table_data cpufreq_tables[] = {
-	{ freq_table_300MHz, 0,  1 },
+	{ freq_table_300MHz, 0, 1 },
 	{ freq_table_1p0GHz, 1, 10 },
 	{ freq_table_1p3GHz, 1, 12 },
 	{ freq_table_1p4GHz, 1, 13 },
-	{ freq_table_1p5GHz, 1, 14 },
-	{ freq_table_1p6GHz, 1, 15 },
-	{ freq_table_1p7GHz, 1, 15 },
+	{ freq_table_1p5GHz, 1, 17 },
+	{ freq_table_1p7GHz, 1, 19 },
 };
 
 static int clip_cpu_rate_limits(

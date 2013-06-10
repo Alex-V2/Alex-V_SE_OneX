@@ -52,6 +52,10 @@
 #include <linux/tegra_vibrator_enr.h>
 #endif
 
+#ifdef CONFIG_TRIPNDROID_VIBRATOR
+#include <linux/tripndroid_vibrator.h>
+#endif
+
 #include <mach/clk.h>
 #include <mach/iomap.h>
 #include <mach/irqs.h>
@@ -294,6 +298,28 @@ static void tegra_vibrator_init(void)
 }
 #endif
 
+#ifdef CONFIG_TRIPNDROID_VIBRATOR
+static struct vibrator_platform_data vibrator_data = {
+	.pwm_data={
+		.name = "vibrator",
+		.bank = 0,
+	},
+	.pwm_gpio = TEGRA_GPIO_PH0,
+	.ena_gpio = TEGRA_GPIO_PF1,
+	.pwr_gpio = TEGRA_GPIO_PE7,
+};
+static struct platform_device tegra_vibrator = {
+	.name= VIBRATOR_NAME,
+	.id=-1,
+	.dev = {
+		.platform_data=&vibrator_data,
+	},
+};
+static void tripndroid_vibrator_init(void)
+{
+	platform_device_register(&tegra_vibrator);
+}
+#endif
 
 static struct platform_device endeavoru_rfkill = {
 	.name = "endeavoru_rfkill",
@@ -1153,7 +1179,7 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_y_max = 1770,
 		.display_width = 720,
 		.display_height = 1280,
-		.notifyFinger = restoreCap, /* restore browser cap, */
+		.notifyFinger = NULL, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.report_type = SYN_AND_REPORT_TYPE_B,
@@ -1211,7 +1237,7 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_x_max = 1100,
 		.abs_y_min = 0,
 		.abs_y_max = 1770,
-		.notifyFinger = restoreCap, /* restore browser cap, */
+		.notifyFinger = NULL, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.default_config = 2,
@@ -1261,7 +1287,7 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_x_max = 1100,
 		.abs_y_min = 0,
 		.abs_y_max = 1770,
-		.notifyFinger = restoreCap, /* restore browser cap, */
+		.notifyFinger = NULL, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.default_config = 2,
@@ -1665,11 +1691,13 @@ static void endeavoru_usb_init(void)
 
 	android_usb_pdata.serial_number = board_serialno();
 	android_usb_pdata.products[0].product_id = android_usb_pdata.product_id;
+
 #if 0
 	if (board_mfg_mode() == BOARD_MFG_MODE_NORMAL /* normal mode */) {
 		android_usb_pdata.cdrom_lun = 0x1;
 	}
 #endif
+
 	platform_device_register(&android_usb_device);
 }
 
@@ -2214,7 +2242,15 @@ static void __init endeavoru_init(void)
 	endeavoru_cam_init();
 	endeavoru_suspend_init();
 	tegra_release_bootloader_fb();
+
+#ifdef CONFIG_TEGRA_VIBRATOR_ENR
 	tegra_vibrator_init();
+#endif
+
+#ifdef CONFIG_TRIPNDROID_VIBRATOR
+	tripndroid_vibrator_init();
+#endif
+
 	leds_lp5521_init();
 	endeavor_flashlight_init();
 #if defined(CONFIG_CABLE_DETECT_ACCESSORY)

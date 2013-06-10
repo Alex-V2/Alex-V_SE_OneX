@@ -25,6 +25,7 @@
 #include <linux/wait.h>
 #include <linux/err.h>
 #include <linux/interrupt.h>
+#include <linux/pm_qos_params.h>
 
 #include <linux/types.h>
 #include <linux/file.h>
@@ -36,7 +37,7 @@
 #include <linux/usb/ch9.h>
 #include <linux/usb/f_mtp.h>
 
-#define MTP_BULK_BUFFER_SIZE       16384
+#define MTP_BULK_BUFFER_SIZE       131072
 #define INTR_BUFFER_SIZE           28
 
 /* String IDs */
@@ -69,13 +70,12 @@
 
 static int htc_mtp_performance_debug;
 static int mtp_qos;
-/* #ifdef CONFIG_PERFLOCK */
 static struct pm_qos_request_list mtp_req_freq;
 static struct pm_qos_request_list req_cpus;
+//extern void release_screen_off_freq_lock(unsigned int capfreq );
+//extern void lock_screen_off_freq_lock();
 static int release_screen_off_flag;
 static struct work_struct mtp_perf_lock_on_work;
-/* #endif */
-
 
 static const char mtp_shortname[] = "mtp_usb";
 
@@ -292,10 +292,12 @@ struct mtp_device_status {
 	__le16	wCode;
 };
 
+#define PM_QOS_CPU_USB_FREQ_MAX_DEFAULT_VALUE 1600000
+#define PM_QOS_MIN_ONLINE_CPUS_USB_TWO_VALUE 1
+
 /* temporary variable used between mtp_open() and mtp_gadget_bind() */
 static struct mtp_dev *_mtp_dev;
-void tegra_udc_set_phy_clk(bool pull_up);
-static void mtp_setup_perflock(struct work_struct *data)
+static void mtp_setup_perflock()
 {
 	struct mtp_dev *dev = _mtp_dev;
 
@@ -303,21 +305,13 @@ static void mtp_setup_perflock(struct work_struct *data)
 	del_timer(&dev->perf_timer);
 	if (dev->mtp_perf_lock_on) {
 		printk(KERN_INFO "[USB][MTP] %s, perf on\n", __func__);
-		if (release_screen_off_flag) {
-			tegra_udc_set_phy_clk(true);
-			release_screen_off_flag = 0;
-		}
-		pm_qos_update_request(&mtp_req_freq, (s32)PM_QOS_CPU_FREQ_MAX_DEFAULT_VALUE);
-		pm_qos_update_request(&req_cpus, (s32)PM_QOS_MAX_ONLINE_CPUS_DEFAULT_VALUE);
+		//pm_qos_update_request(&mtp_req_freq, (s32)PM_QOS_CPU_USB_FREQ_MAX_DEFAULT_VALUE);
+		//pm_qos_update_request(&req_cpus, (s32)PM_QOS_MIN_ONLINE_CPUS_USB_TWO_VALUE);
 
 	} else {
 		printk(KERN_INFO "[USB][MTP] %s, perf off\n", __func__);
-		pm_qos_update_request(&mtp_req_freq, (s32)PM_QOS_CPU_FREQ_MIN_DEFAULT_VALUE);
-		pm_qos_update_request(&req_cpus, (s32)PM_QOS_MIN_ONLINE_CPUS_DEFAULT_VALUE);
-		if (!release_screen_off_flag) {
-			release_screen_off_flag = 1;
-			tegra_udc_set_phy_clk(false);
-		}
+		//pm_qos_update_request(&mtp_req_freq, (s32)PM_QOS_CPU_FREQ_MIN_DEFAULT_VALUE);
+		//pm_qos_update_request(&req_cpus, (s32)PM_QOS_MIN_ONLINE_CPUS_DEFAULT_VALUE);
 	}
 }
 /* 50 ms per file */
@@ -329,7 +323,6 @@ static void mtp_qos_enable(int qos_n)
 	mtp_qos = qos_n;
 
 	if (qos_n) {
-		release_screen_off_flag = 1;
 		dev->mtp_perf_lock_on = true;
 		schedule_work(&mtp_perf_lock_on_work);
 		dev->timer_expired = qos_n * MTP_QOS_N_RATIO;
@@ -1027,7 +1020,7 @@ static long mtp_ioctl(struct file *fp, unsigned code, unsigned long value)
 	}
 	case MTP_SET_CPU_PERF:
 	{
-		pr_info("[USB] MTP_SET_CPU_PERF(%d)\n", value);
+		pr_info("[USB] MTP_SET_CPU_PERF(%ld)\n", value);
 		mtp_qos_enable(value);
 		break;
 	}
@@ -1379,11 +1372,10 @@ static int mtp_setup(void)
 
 	_mtp_dev = dev;
 	htc_mtp_performance_debug = 0;
-	release_screen_off_flag = 1;
 /* #ifdef CONFIG_PERFLOCK */
 	INIT_WORK(&mtp_perf_lock_on_work, mtp_setup_perflock);
-	pm_qos_add_request(&mtp_req_freq, PM_QOS_CPU_FREQ_MIN, (s32)PM_QOS_CPU_FREQ_MIN_DEFAULT_VALUE);
-	pm_qos_add_request(&req_cpus, PM_QOS_MIN_ONLINE_CPUS, (s32)PM_QOS_MIN_ONLINE_CPUS_DEFAULT_VALUE);
+	//pm_qos_add_request(&mtp_req_freq, PM_QOS_CPU_FREQ_MIN, (s32)PM_QOS_CPU_FREQ_MIN_DEFAULT_VALUE);
+	//pm_qos_add_request(&req_cpus, PM_QOS_MIN_ONLINE_CPUS, (s32)PM_QOS_MIN_ONLINE_CPUS_DEFAULT_VALUE);
 	setup_timer(&dev->perf_timer, mtp_perf_lock_disable, (unsigned long)dev);
 /* #endif */
 

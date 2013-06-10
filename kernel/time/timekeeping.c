@@ -1033,7 +1033,7 @@ void get_monotonic_boottime(struct timespec *ts)
 	} while (read_seqretry(&xtime_lock, seq));
 
 	set_normalized_timespec(ts, ts->tv_sec + tomono.tv_sec + sleep.tv_sec,
-			ts->tv_nsec + tomono.tv_nsec + sleep.tv_nsec + nsecs);
+		(s64)ts->tv_nsec + tomono.tv_nsec + sleep.tv_nsec + nsecs);
 }
 EXPORT_SYMBOL_GPL(get_monotonic_boottime);
 
@@ -1117,6 +1117,7 @@ void do_timer(unsigned long ticks)
 	jiffies_64 += jiffies_per_tick * ticks;
 	update_wall_time();
 	calc_global_load(ticks);
+	prepare_idle_mask(ticks);
 }
 
 /**
