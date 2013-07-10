@@ -1,6 +1,7 @@
 /* drivers/input/touchscreen/synaptics_3200.c - Synaptics 3200 serious touch panel driver
  *
  * Copyright (C) 2011 HTC Corporation.
+ * Copyright (c) 2013, flar2 asegaert@gmail.com - doubletap2wake 
  *
  *
  * This software is licensed under the terms of the GNU General Public
@@ -176,6 +177,7 @@ static cputime64_t s2w_double_tap_start = 0;
 static unsigned int s2w_double_tap_barrier_y = 1300;
 
 static bool s2w_switch = true;
+int pocket_detect = 1; 
 static bool scr_suspended = false;
 static bool exec_count = true;
 static bool barrier = false;
@@ -194,19 +196,27 @@ extern void sweep2wake_setdev(struct input_dev * input_device) {
 EXPORT_SYMBOL(sweep2wake_setdev);
 
 static void sweep2wake_presspwr(struct work_struct * sweep2wake_presspwr_work) {
+
+	int pocket_mode = 0;
+	
+	if (scr_suspended == true && pocket_detect == 1)
+		pocket_mode = power_key_check_in_pocket();
+
+	if (!pocket_mode || pocket_detect == 0) {
+
 	if (!mutex_trylock(&pwrkeyworklock))
-        return;
-
-	pr_info(S2W_TAG "mode=%d", mode);
-
-	input_event(sweep2wake_pwrdev, EV_KEY, KEY_POWER, 1);
-	input_event(sweep2wake_pwrdev, EV_SYN, 0, 0);
-	msleep(100);
-	input_event(sweep2wake_pwrdev, EV_KEY, KEY_POWER, 0);
-	input_event(sweep2wake_pwrdev, EV_SYN, 0, 0);
-	msleep(100);
-    mutex_unlock(&pwrkeyworklock);
+		return;
+		input_event(sweep2wake_pwrdev, EV_KEY, KEY_POWER, 1);
+		input_event(sweep2wake_pwrdev, EV_SYN, 0, 0);
+		msleep(80);
+		input_event(sweep2wake_pwrdev, EV_KEY, KEY_POWER, 0);
+		input_event(sweep2wake_pwrdev, EV_SYN, 0, 0);
+		msleep(80);
+		mutex_unlock(&pwrkeyworklock);
+		return;
+	}
 }
+
 
 static DECLARE_WORK(sweep2wake_presspwr_work, sweep2wake_presspwr);
 
@@ -1808,6 +1818,30 @@ static ssize_t synaptics_s2w_double_tap_duration_dump(struct device *dev,
 
 static DEVICE_ATTR(s2w_double_tap_duration, (S_IWUSR|S_IRUGO),
 	synaptics_s2w_double_tap_duration_show, synaptics_s2w_double_tap_duration_dump);
+
+static ssize_t synaptics_pocket_detect_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	size_t count = 0;
+
+	count += sprintf(buf, "%d\n", pocket_detect);
+
+	return count;
+}
+
+static ssize_t synaptics_pocket_detect_dump(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	if (buf[0] >= '0' && buf[0] <= '1' && buf[1] == '\n')
+                if (pocket_detect != buf[0] - '0')
+		        pocket_detect = buf[0] - '0';
+
+	return count;
+}
+
+static DEVICE_ATTR(pocket_detect, 0666,
+	synaptics_pocket_detect_show, synaptics_pocket_detect_dump);
+
 	
 static ssize_t synaptics_s2w_double_tap_threshold_show(struct device *dev,
 		struct device_attribute *attr, char *buf)
@@ -1957,7 +1991,8 @@ static int synaptics_touch_sysfs_init(void)
         sysfs_create_file(android_touch_kobj, &dev_attr_s2w_allow_double_tap.attr) ||
         sysfs_create_file(android_touch_kobj, &dev_attr_s2w_double_tap_duration.attr) ||        
         sysfs_create_file(android_touch_kobj, &dev_attr_s2w_double_tap_threshold.attr) ||
-        sysfs_create_file(android_touch_kobj, &dev_attr_s2w_double_tap_barrier_y.attr)        
+        sysfs_create_file(android_touch_kobj, &dev_attr_s2w_double_tap_barrier_y.attr) ||
+	sysfs_create_file(android_touch_kobj, &dev_attr_pocket_detect.attr)           
 	    )
         return -ENOMEM;
 #endif
@@ -1989,6 +2024,15 @@ static int synaptics_touch_sysfs_init(void)
 			printk(KERN_INFO "[TP]%s: Exported GPIO %d.", __func__, ts->gpio_irq);
 		}
 	}
+/*	ret = sysfs_create_file(android_touch_kobj, &dev_attr_doubletap2wake.attr);
+	if (ret) {
+		printk(KERN_ERR "%s: sysfs_create_file failed\n", __func__);
+		return ret; */
+	ret = sysfs_create_file(android_touch_kobj, &dev_attr_pocket_detect.attr);
+	if (ret) {
+		printk(KERN_ERR "%s: sysfs_create_file failed\n", __func__);
+		return ret;
+	}
 #endif
 	return 0;
 }
@@ -2017,6 +2061,7 @@ static void synaptics_touch_sysfs_remove(void)
 	sysfs_remove_file(android_touch_kobj, &dev_attr_s2w_double_tap_duration.attr);
 	sysfs_remove_file(android_touch_kobj, &dev_attr_s2w_double_tap_threshold.attr);
 	sysfs_remove_file(android_touch_kobj, &dev_attr_s2w_double_tap_barrier_y.attr);
+	sysfs_remove_file(android_touch_kobj, &dev_attr_pocket_detect.attr);
 #endif
 #ifdef SYN_WIRELESS_DEBUG
 	sysfs_remove_file(android_touch_kobj, &dev_attr_enabled.attr);
@@ -2171,6 +2216,25 @@ static void synaptics_s2w_turn_off(void)
 }
 
 #endif
+
+/* #ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_SWEEP2WAKE
+static void dt2w_func(cputime64_t trigger_time) {
+
+       dt2w_time[1] = dt2w_time[0]; 
+        dt2w_time[0] = trigger_time;
+
+	printk(KERN_INFO"[DT2W]: inside the function\n");
+
+	if (((dt2w_time[0]-dt2w_time[1]) > DT2W_TIMEOUT_MIN) && ((dt2w_time[0]-dt2w_time[1]) < DT2W_TIMEOUT_MAX)) {
+               printk(KERN_INFO"[DT2W]: OFF->ON\n");
+               sweep2wake_pwrtrigger();
+	}
+
+        return;
+}
+
+#endif */
+
 
 static void synaptics_ts_finger_func(struct synaptics_ts_data *ts)
 {

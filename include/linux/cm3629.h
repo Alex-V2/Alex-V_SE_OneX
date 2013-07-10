@@ -188,3 +188,4 @@ struct cm3629_platform_data {
 int power_key_check_in_pocket(void);
 int psensor_enable_by_touch_driver(int on);
 #endif
+

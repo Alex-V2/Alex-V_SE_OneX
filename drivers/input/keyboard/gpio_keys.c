@@ -28,13 +28,13 @@
 #include <linux/workqueue.h>
 #include <linux/gpio.h>
 #include <linux/wakelock.h>
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_SWEEP2WAKE
+#include <linux/synaptics_i2c_rmi.h>
+#endif
 
 #include <asm/gpio.h>
 #include <linux/cm3629.h>
 
-#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_SWEEP2WAKE
-#include <linux/synaptics_i2c_rmi.h>
-#endif
 struct gpio_button_data {
 	struct gpio_keys_button *button;
 	struct input_dev *input;
@@ -488,7 +488,7 @@ static int __devinit gpio_keys_setup_key(struct platform_device *pdev,
 					 struct gpio_button_data *bdata,
 					 struct gpio_keys_button *button)
 {
-	const char *desc = button->desc ? button->desc : "gpio_keys";
+	char *desc = button->desc ? button->desc : "gpio_keys";
 	struct device *dev = &pdev->dev;
 	unsigned long irqflags;
 	int irq, error;
@@ -609,13 +609,6 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 	input->id.product = 0x0001;
 	input->id.version = 0x0100;
 
-#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_SWEEP2WAKE
-	if (!strcmp(input->name, "gpio-keys")) {
-		sweep2wake_setdev(input);
-		printk(KERN_INFO "[sweep2wake]: set device %s\n", input->name);
-	}
-#endif
-
 	PWR_MISTOUCH_gpio = pdata->PWR_MISTOUCH_gpio;
 	mistouch_gpio_normal = pdata->mistouch_gpio_normal;
 	mistouch_gpio_active = pdata->mistouch_gpio_active;
@@ -633,6 +626,12 @@ static int __devinit gpio_keys_probe(struct platform_device *pdev)
 	delay_wq = create_singlethread_workqueue("gpio_key_work");
 	INIT_DELAYED_WORK(&delay_work, Mistouch_powerkey_func);
 	wake_lock_init(&key_reset_clr_wake_lock, WAKE_LOCK_SUSPEND, "gpio_input_pwr_clear");
+#ifdef CONFIG_TOUCHSCREEN_SYNAPTICS_SWEEP2WAKE
+	if (!strcmp(input->name, "gpio-keys")) {
+		sweep2wake_setdev(input);
+		printk(KERN_INFO "[sweep2wake]: set device %s\n", input->name);
+	}
+#endif
 
 	/* Enable auto repeat feature of Linux input subsystem */
 	if (pdata->rep)
@@ -747,8 +746,6 @@ static int gpio_keys_suspend(struct device *dev)
 	struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
 	int i;
 
-    printk(KERN_INFO "[KEY] suspend start\n");
-    
 	if (device_may_wakeup(&pdev->dev)) {
 		for (i = 0; i < pdata->nbuttons; i++) {
 			struct gpio_keys_button *button = &pdata->buttons[i];
@@ -760,8 +757,6 @@ static int gpio_keys_suspend(struct device *dev)
 	}
 	doCheck = false;
 	pr_info("[KEY] doCheck = false\n");
-
-    printk(KERN_INFO "[KEY] suspend end\n");
 	return 0;
 }
 
@@ -772,8 +767,6 @@ static int gpio_keys_resume(struct device *dev)
 	struct gpio_keys_platform_data *pdata = pdev->dev.platform_data;
 	int wakeup_key = KEY_RESERVED;
 	int i;
-
-    printk(KERN_INFO "[KEY] resume start\n");
 
 	if (pdata->wakeup_key)
 		wakeup_key = pdata->wakeup_key();
@@ -794,7 +787,6 @@ static int gpio_keys_resume(struct device *dev)
 	}
 	input_sync(ddata->input);
 
-    printk(KERN_INFO "[KEY] resume end\n");
 	return 0;
 }
 

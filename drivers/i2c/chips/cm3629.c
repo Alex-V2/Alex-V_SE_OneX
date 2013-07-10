@@ -48,11 +48,11 @@
 #define POLLING_PROXIMITY 1
 #define NO_IGNORE_BOOT_MODE 1
 
-#define NEAR_DELAY_TIME ((100 * HZ) / 1000)
+#define NEAR_DELAY_TIME ((0 * HZ) / 1000)
 
 #ifdef POLLING_PROXIMITY
-#define POLLING_DELAY		200
-#define TH_ADD			10
+#define POLLING_DELAY		2
+#define TH_ADD			1
 #endif
 
 static int record_init_fail = 0;
@@ -2853,3 +2853,4 @@ module_exit(cm3629_exit);
 
 MODULE_DESCRIPTION("cm3629 Driver");
 MODULE_LICENSE("GPL");
+

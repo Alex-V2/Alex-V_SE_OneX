@@ -141,20 +141,11 @@ static bool check_ref_to_sync(struct tegra_dc_mode *mode)
 int tegra_dc_calc_refresh(const struct tegra_dc_mode *m)
 {
 	long h_total, v_total, refresh;
-	long pclk;
-
-	if (m->rated_pclk > 0)
-		pclk = m->rated_pclk;
-	else
-		pclk = m->pclk;
-
 	h_total = m->h_active + m->h_front_porch + m->h_back_porch +
 		m->h_sync_width;
 	v_total = m->v_active + m->v_front_porch + m->v_back_porch +
 		m->v_sync_width;
-	if (!pclk || !h_total || !v_total)
-		return 0;
-	refresh = pclk / h_total;
+	refresh = m->pclk / h_total;
 	refresh *= 1000;
 	refresh /= v_total;
 	return refresh;
@@ -208,21 +199,18 @@ int tegra_dc_program_mode(struct tegra_dc *dc, struct tegra_dc_mode *mode)
 
 	/* TODO: MIPI/CRT/HDMI clock cals */
 
-	val = 0;
-	if (!(dc->out->type == TEGRA_DC_OUT_DSI ||
-		dc->out->type == TEGRA_DC_OUT_HDMI)) {
-		val = DISP_DATA_FORMAT_DF1P1C;
+	val = DISP_DATA_FORMAT_DF1P1C;
 
-		if (dc->out->align == TEGRA_DC_ALIGN_MSB)
-			val |= DISP_DATA_ALIGNMENT_MSB;
-		else
-			val |= DISP_DATA_ALIGNMENT_LSB;
+	if (dc->out->align == TEGRA_DC_ALIGN_MSB)
+		val |= DISP_DATA_ALIGNMENT_MSB;
+	else
+		val |= DISP_DATA_ALIGNMENT_LSB;
 
-		if (dc->out->order == TEGRA_DC_ORDER_RED_BLUE)
-			val |= DISP_DATA_ORDER_RED_BLUE;
-		else
-			val |= DISP_DATA_ORDER_BLUE_RED;
-	}
+	if (dc->out->order == TEGRA_DC_ORDER_RED_BLUE)
+		val |= DISP_DATA_ORDER_RED_BLUE;
+	else
+		val |= DISP_DATA_ORDER_BLUE_RED;
+
 	tegra_dc_writel(dc, val, DC_DISP_DISP_INTERFACE_CONTROL);
 
 	rate = tegra_dc_clk_get_rate(dc);
@@ -312,7 +300,7 @@ int tegra_dc_set_fb_mode(struct tegra_dc *dc,
 				"Display timing doesn't meet restrictions.\n");
 		return -EINVAL;
 	}
-	dev_dbg(&dc->ndev->dev, "Using mode %dx%d pclk=%d href=%d vref=%d\n",
+	dev_info(&dc->ndev->dev, "Using mode %dx%d pclk=%d href=%d vref=%d\n",
 		mode.h_active, mode.v_active, mode.pclk,
 		mode.h_ref_to_sync, mode.v_ref_to_sync
 	);

@@ -138,13 +138,7 @@ void tegra_dc_setup_clk(struct tegra_dc *dc, struct clk *clk)
 			}
 		}
 
-		/* divide by 1000 to avoid overflow */
-		dc->mode.pclk /= 1000;
-		rate = (dc->mode.pclk * dc->shift_clk_div.mul * 2)
-					/ dc->shift_clk_div.div;
-		rate *= 1000;
-		dc->mode.pclk *= 1000;
-
+		rate = dc->mode.pclk * dc->shift_clk_div * 2;
 		if (rate != clk_get_rate(base_clk)) {
 			if (dc->suspend_status == DSI_SUSPEND_FULL) {
 				disable_irq(dc->irq);
