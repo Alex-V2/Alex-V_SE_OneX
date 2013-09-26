@@ -77,7 +77,6 @@
 #include <mach/mhl.h>
 #include <mach/tegra-bb-power.h>
 #include <mach/htc_bdaddress.h>
-#include <mach/htc_util.h>
 #include "board.h"
 #include "clock.h"
 #include "board-endeavoru.h"
@@ -92,7 +91,6 @@
 #include <mach/tegra_flashlight.h>
 
 #include <linux/skbuff.h>
-#include <linux/ti_wilink_st.h>
 #include <linux/wakelock.h>
 /* TI 128x Bluetooth begin */
 #include <linux/ti_wilink_st.h>
@@ -173,19 +171,18 @@ static struct tegra_thermal_data thermal_data = {
 static struct led_i2c_config lp5521_led_config[] = {
 	{
 		.name = "amber",
-                .led_cur = 95,
-                .led_lux = 100
+		.led_cur = 85,
+		.led_lux = 45,
 	},
 	{
 		.name = "green",
-                .led_cur = 95,
-                .led_lux = 100
+		.led_cur = 85,
+		.led_lux = 55,
 	},
 	{
 		.name = "button-backlight",
-                .led_cur = 2,
-                .led_lux = 55,
-
+		.led_cur = 35,
+		.led_lux = 25,
 	},
 };
 static struct led_i2c_platform_data led_data = {
@@ -202,20 +199,6 @@ static struct i2c_board_info i2c_led_devices[] = {
 };
 static void leds_lp5521_init(void)
 {
-	int ret ;
-	ret = gpio_request(TEGRA_GPIO_PY1, "led_trigger");
-        if (ret < 0){
-                pr_err("[LED] %s: gpio_request failed for gpio %s\n",
-                        __func__, "LED TRIGGER");
-	}
-        ret = gpio_direction_output(TEGRA_GPIO_PY1, 0);
-        if (ret < 0) {
-                pr_err("[LED] %s: gpio_direction_output failed %d\n", __func__, ret);
-                gpio_free(TEGRA_GPIO_PY1);
-                return;
-        }
-	tegra_gpio_enable(TEGRA_GPIO_PY1);
-
 	i2c_register_board_info(1, i2c_led_devices,
 		ARRAY_SIZE(i2c_led_devices));
 }
@@ -304,9 +287,6 @@ static struct vibrator_platform_data vibrator_data = {
 		.name = "vibrator",
 		.bank = 0,
 	},
-	.pwm_gpio = TEGRA_GPIO_PH0,
-	.ena_gpio = TEGRA_GPIO_PF1,
-	.pwr_gpio = TEGRA_GPIO_PE7,
 };
 static struct platform_device tegra_vibrator = {
 	.name= VIBRATOR_NAME,
@@ -317,15 +297,15 @@ static struct platform_device tegra_vibrator = {
 };
 static void tripndroid_vibrator_init(void)
 {
+	vibrator_data.pwm_gpio = TEGRA_GPIO_PH0;
+	vibrator_data.ena_gpio = TEGRA_GPIO_PF1;
+
+	//vibrator_data.pwm_gpio = -1;
+	//vibrator_data.ena_gpio = -1;
+
 	platform_device_register(&tegra_vibrator);
 }
 #endif
-
-static struct platform_device endeavoru_rfkill = {
-	.name = "endeavoru_rfkill",
-	.id = -1,
-};
-
 
 /* TI 128x Bluetooth begin */
 static unsigned long retry_suspend;
@@ -414,6 +394,7 @@ static __initdata struct tegra_clk_init_table endeavoru_clk_init_table[] = {
 	{ "dam2",	"clk_m",	12000000,	false},
 	{ "vi",		"pll_p",	0,		false},
 	{ "vi_sensor",	"pll_p",	0,		false},
+	{ "i2c5",	"pll_p",	3200000,	false},
 	{ NULL,		NULL,		0,		0},
 };
 
@@ -457,7 +438,7 @@ static struct tegra_i2c_platform_data endeavoru_i2c4_platform_data = {
 static struct tegra_i2c_platform_data endeavoru_i2c5_platform_data = {
 	.adapter_nr	= 4,
 	.bus_count	= 1,
-	.bus_clk_rate	= { 100000, 0 },
+	.bus_clk_rate	= { 390000, 0 },
 	.scl_gpio		= {TEGRA_GPIO_PZ6, 0},
 	.sda_gpio		= {TEGRA_GPIO_PZ7, 0},
 	.arb_recovery = arb_lost_recovery,
@@ -834,13 +815,10 @@ static struct uart_clk_parent uart_parent_clk[] = {
 #endif
 };
 static struct tegra_uart_platform_data endeavoru_uart_pdata;
-static struct tegra_uart_platform_data endeavoru_loopback_uart_pdata;
 
 #ifdef CONFIG_SERIAL_TEGRA_BRCM
 static struct tegra_uart_platform_data endeavoru_brcm_uart_pdata;
 #endif
-
-static struct tegra_uart_platform_data endeavor_uart_pdata;
 
 #ifdef CONFIG_BT_CTS_WAKEUP
 static struct tegra_uart_platform_data endeavor_bt_uart_pdata;
@@ -896,13 +874,6 @@ static void __init endeavoru_uart_init(void)
 	endeavoru_uart_pdata.parent_clk_list = uart_parent_clk;
 	endeavoru_uart_pdata.parent_clk_count = ARRAY_SIZE(uart_parent_clk);
 
-/* GPS use UARTE
-	endeavoru_loopback_uart_pdata.parent_clk_list = uart_parent_clk;
-	endeavoru_loopback_uart_pdata.parent_clk_count =
-						ARRAY_SIZE(uart_parent_clk);
-	endeavoru_loopback_uart_pdata.is_loopback = true;
-*/
-
 	tegra_uarta_device.dev.platform_data = &endeavoru_uart_pdata;
 	tegra_uartb_device.dev.platform_data = &endeavoru_uart_pdata;
 	tegra_uartc_device.dev.platform_data = &endeavoru_uart_pdata;
@@ -933,11 +904,6 @@ static void __init endeavoru_uart_init(void)
 	tegra_uartc_device.dev.platform_data = &endeavoru_brcm_uart_pdata;
 	tegra_uartc_device.name = "tegra_uart_brcm"; /* for brcm */
 #endif
-
-/* GPS uses UARTE
-	// UARTE is used for loopback test purpose
-	tegra_uarte_device.dev.platform_data = &endeavoru_loopback_uart_pdata;
-*/
 
 	/* Register low speed only if it is selected */
 	if (!is_tegra_debug_uartport_hs())
@@ -1039,74 +1005,6 @@ static struct platform_device *endeavoru_devices[] __initdata = {
 #endif
 };
 
-#define MXT_CONFIG_CRC 0x62F903
-/*
- * Config converted from memory-mapped cfg-file with
- * following version information:
- *
- *
- *
- *      FAMILY_ID=128
- *      VARIANT=1
- *      VERSION=32
- *      BUILD=170
- *      VENDOR_ID=255
- *      PRODUCT_ID=TBD
- *      CHECKSUM=0xC189B6
- *
- *
- */
-
-static const u8 config[] = {
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0xFF, 0xFF, 0x32, 0x0A, 0x00, 0x05, 0x01, 0x00,
-        0x00, 0x1E, 0x0A, 0x8B, 0x00, 0x00, 0x13, 0x0B,
-        0x00, 0x10, 0x32, 0x03, 0x03, 0x00, 0x03, 0x01,
-        0x00, 0x0A, 0x0A, 0x0A, 0x0A, 0xBF, 0x03, 0x1B,
-        0x02, 0x00, 0x00, 0x37, 0x37, 0x00, 0x00, 0x00,
-        0x00, 0x28, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0xA9, 0x7F, 0x9A, 0x0E, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x05, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x03, 0x23, 0x00, 0x00, 0x00, 0x0A,
-        0x0F, 0x14, 0x19, 0x03, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x01, 0x00, 0x03, 0x08, 0x10,
-        0x00
-};
-
-static struct mxt_platform_data atmel_mxt_info = {
-        .x_line         = 19,
-        .y_line         = 11,
-        .x_size         = 960,
-        .y_size         = 540,
-        .blen           = 0x10,
-        .threshold      = 0x32,
-        .voltage        = 3300000,              /* 3.3V */
-        .orient         = 3,
-        .config         = config,
-        .config_length  = 168,
-        .config_crc     = MXT_CONFIG_CRC,
-        .irqflags       = IRQF_TRIGGER_FALLING,
-/*      .read_chg       = &read_chg, */
-        .read_chg       = NULL,
-};
-
-static struct i2c_board_info __initdata atmel_i2c_info[] = {
-	{
-		I2C_BOARD_INFO("atmel_mxt_ts", MXT224_I2C_ADDR1),
-		.irq = TEGRA_GPIO_TO_IRQ(TEGRA_GPIO_PH6),
-		.platform_data = &atmel_mxt_info,
-	}
-};
-
 //virtual key for XC board and later (3 virtual keys)
 static ssize_t Aproj_virtual_keys_show_XC(struct kobject *kobj,
 		struct kobj_attribute *attr, char *buf)
@@ -1179,10 +1077,9 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_y_max = 1770,
 		.display_width = 720,
 		.display_height = 1280,
-		.notifyFinger = NULL, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
-		.report_type = SYN_AND_REPORT_TYPE_B,
+		.report_type = SYN_AND_REPORT_TYPE_A,
 		.reduce_report_level = {60, 60, 50, 0, 0},
 		.default_config = 2,
 		.config = {
@@ -1237,14 +1134,13 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_x_max = 1100,
 		.abs_y_min = 0,
 		.abs_y_max = 1770,
-		.notifyFinger = NULL, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.default_config = 2,
 		.large_obj_check = 1,
 		.tw_pin_mask = 0x0080,
 		.sensor_id = 0x0080 | SENSOR_ID_CHECKING_EN, /* YFO */
-		.report_type = SYN_AND_REPORT_TYPE_B,
+		.report_type = SYN_AND_REPORT_TYPE_A,
 		.segmentation_bef_unlock = 0x50,
 		.customer_register = {0xF9,0x64,0x74,0x32},
 		.multitouch_calibration = 1,
@@ -1287,14 +1183,13 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_x_max = 1100,
 		.abs_y_min = 0,
 		.abs_y_max = 1770,
-		.notifyFinger = NULL, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.default_config = 2,
 		.large_obj_check = 1,
 		.tw_pin_mask = 0x0080,
 		.sensor_id = 0x0000 | SENSOR_ID_CHECKING_EN, /* J-Touch */
-		.report_type = SYN_AND_REPORT_TYPE_B,
+		.report_type = SYN_AND_REPORT_TYPE_A,
 		.segmentation_bef_unlock = 0x50,
 		.customer_register = {0xF9,0x64,0x74,0x32},
 		.multitouch_calibration = 1,
@@ -1487,34 +1382,31 @@ static int __init endeavoru_touch_init(void)
 	return retval;
 }
 
-static int endeavoru_usb_hsic_postsupend(void)
+static void endeavoru_usb_hsic_postsupend(void)
 {
 	pr_debug("%s\n", __func__);
 #ifdef CONFIG_TEGRA_BB_XMM_POWER
 	baseband_xmm_set_power_status(BBXMM_PS_L2);
 #endif
-	return 0;
 }
 
-static int endeavoru_usb_hsic_preresume(void)
+static void endeavoru_usb_hsic_preresume(void)
 {
 	pr_debug("%s\n", __func__);
 #ifdef CONFIG_TEGRA_BB_XMM_POWER
 	baseband_xmm_set_power_status(BBXMM_PS_L2TOL0);
 #endif
-	return 0;
 }
 
-static int endeavoru_usb_hsic_phy_ready(void)
+static void endeavoru_usb_hsic_phy_ready(void)
 {
 	pr_debug("%s\n", __func__);
 #ifdef CONFIG_TEGRA_BB_XMM_POWER
 	baseband_xmm_set_power_status(BBXMM_PS_L0);
 #endif
-	return 0;
 }
 
-static int endeavoru_usb_hsic_phy_off(void)
+static void endeavoru_usb_hsic_phy_off(void)
 {
 	pr_debug("%s\n", __func__);
 #ifdef CONFIG_TEGRA_BB_XMM_POWER
@@ -1524,7 +1416,6 @@ static int endeavoru_usb_hsic_phy_off(void)
 	baseband_xmm_set_power_status(BBXMM_PS_L3);
 #endif
 #endif
-	return 0;
 }
 
 static struct tegra_usb_phy_platform_ops hsic_xmm_plat_ops = {
@@ -1692,11 +1583,9 @@ static void endeavoru_usb_init(void)
 	android_usb_pdata.serial_number = board_serialno();
 	android_usb_pdata.products[0].product_id = android_usb_pdata.product_id;
 
-#if 0
 	if (board_mfg_mode() == BOARD_MFG_MODE_NORMAL /* normal mode */) {
 		android_usb_pdata.cdrom_lun = 0x1;
 	}
-#endif
 
 	platform_device_register(&android_usb_device);
 }
@@ -1832,30 +1721,6 @@ static void endeavoru_audio_init(void)
 
 	platform_add_devices(endeavoru_audio_devices,
 			ARRAY_SIZE(endeavoru_audio_devices));
-}
-
-static void endeavoru_gps_init(void)
-{
-	int rc;
-
-	tegra_gpio_enable(TEGRA_GPIO_PBB7);	// GPS_RESET_N gpio223
-	tegra_gpio_enable(TEGRA_GPIO_PP5);	// GPS_ON_OFF gpio125
-
-	rc = gpio_request(TEGRA_GPIO_PP5, "GPS_ON_OFF");
-	if (rc)
-		pr_err("GPS_ON_OFF gpio request failed:%d\n", rc);
-	rc = gpio_direction_output(TEGRA_GPIO_PP5, 0);
-	if (rc)
-		pr_err("GPS_ON_OFF gpio direction configuration failed:%d\n", rc);
-	gpio_export(TEGRA_GPIO_PP5, false);
-
-	rc = gpio_request(TEGRA_GPIO_PBB7, "GPS_RESET_N");
-	if (rc)
-		pr_err("GPS_RESET_N gpio request failed:%d\n", rc);
-	rc = gpio_direction_output(TEGRA_GPIO_PBB7, 1);
-	if (rc)
-		pr_err("GPS_RESET_N gpio direction configuration failed:%d\n", rc);
-	gpio_export(TEGRA_GPIO_PBB7, false);
 }
 
 static struct baseband_power_platform_data tegra_baseband_power_data = {
@@ -2006,26 +1871,6 @@ static void gpio_o_l(int gpio, char* name)
         }
         tegra_gpio_enable(gpio);
         gpio_export(gpio, true);
-}
-
-static void modem_not_init(void)
-{
-        pr_info("%s: disable gpio\n", __func__);
-
-        gpio_o_l(TEGRA_GPIO_PM4, "TEGRA_GPIO_PM4");
-        gpio_o_l(TEGRA_GPIO_PC1, "TEGRA_GPIO_PC1");
-        gpio_o_l(TEGRA_GPIO_PN0, "TEGRA_GPIO_PN0");
-        gpio_o_l(TEGRA_GPIO_PN3, "TEGRA_GPIO_PN3");
-        gpio_o_l(TEGRA_GPIO_PC6, "TEGRA_GPIO_PC6");
-        gpio_o_l(TEGRA_GPIO_PJ0, "TEGRA_GPIO_PJ0");
-        gpio_o_l(TEGRA_GPIO_PV0, "TEGRA_GPIO_PV0");
-        gpio_o_l(TEGRA_GPIO_PN1, "TEGRA_GPIO_PN1");
-        gpio_o_l(TEGRA_GPIO_PN2, "TEGRA_GPIO_PN2");
-        gpio_o_l(TEGRA_GPIO_PJ7, "TEGRA_GPIO_PJ7");
-        gpio_o_l(TEGRA_GPIO_PK7, "TEGRA_GPIO_PK7");
-        gpio_o_l(TEGRA_GPIO_PB0, "TEGRA_GPIO_PB0");
-        gpio_o_l(TEGRA_GPIO_PB1, "TEGRA_GPIO_PB1");
-
 }
 
 static void endeavoru_baseband_init(void)
@@ -2234,7 +2079,7 @@ static void __init endeavoru_init(void)
 		sysfs_create_group(properties_kobj, &Aproj_properties_attr_group_XC);
 	}
 	endeavoru_audio_init();
-	//endeavoru_gps_init();
+
 	endeavoru_baseband_init();
 	endeavor_panel_init();
 	endeavoru_emc_init();
@@ -2262,11 +2107,6 @@ static void __init endeavoru_init(void)
 	proc = create_proc_read_entry("dying_processes", 0, NULL, dying_processors_read_proc, NULL);
 	if (!proc)
 		printk(KERN_ERR"Create /proc/dying_processes FAILED!\n");
-
-	if (!!(get_kernel_flag() & KERNEL_FLAG_PM_MONITOR) && board_mfg_mode() != BOARD_MFG_MODE_OFFMODE_CHARGING) {
-		htc_monitor_init();
-		htc_pm_monitor_init();
-	}
 }
 
 static void __init endeavoru_reserve(void)
