@@ -51,8 +51,13 @@ static void do_powergate_locked(int id)
 
 static void do_unpowergate_locked(int id)
 {
-	if (id != -1)
-		tegra_unpowergate_partition(id);
+	int ret = 0;
+	if (id != -1) {
+		ret = tegra_unpowergate_partition(id);
+		if (ret)
+			pr_err("%s: unpowergate failed: id = %d\n",
+					__func__, id);
+	}
 }
 
 static void do_module_reset_locked(struct nvhost_device *dev)
@@ -239,20 +244,38 @@ void nvhost_module_idle_mult(struct nvhost_device *dev, int refs)
 	bool kick = false;
 
 	mutex_lock(&dev->lock);
+
 	dev->refcount -= refs;
-	if (dev->refcount == 0) {
-		if (nvhost_module_powered(dev))
-			schedule_clockgating_locked(dev);
-		kick = true;
+
+	/* submits on the fly -> exit */
+	if (dev->refcount)
+		goto out;
+
+	if (drv->idle) {
+		/* give a reference for idle(). otherwise the dev can be
+		 * clockgated */
+		dev->refcount++;
+		mutex_unlock(&dev->lock);
+		drv->idle(dev);
+		mutex_lock(&dev->lock);
+		dev->refcount--;
 	}
+
+	/* check that we don't have any new submits on the channel */
+	if (dev->refcount)
+		goto out;
+
+	/* no new submits. just schedule clock gating */
+	kick = true;
+	if (nvhost_module_powered(dev))
+		schedule_clockgating_locked(dev);
+
+out:
 	mutex_unlock(&dev->lock);
 
-	if (kick) {
+	/* wake up a waiting thread if we actually went to idle state */
+	if (kick)
 		wake_up(&dev->idle_wq);
-
-		if (drv->idle)
-			drv->idle(dev);
-	}
 }
 
 int nvhost_module_get_rate(struct nvhost_device *dev, unsigned long *rate,
@@ -294,22 +317,16 @@ int nvhost_module_set_rate(struct nvhost_device *dev, void *priv,
 		unsigned long rate, int index)
 {
 	struct nvhost_module_client *m;
-	int i, ret = 0;
+	int ret = 0;
 
 	mutex_lock(&client_list_lock);
 	list_for_each_entry(m, &dev->client_list, node) {
-		if (m->priv == priv) {
-			for (i = 0; i < dev->num_clks; i++)
-				m->rate[i] = clk_round_rate(dev->clk[i], rate);
-			break;
-		}
+		if (m->priv == priv)
+			m->rate[index] = clk_round_rate(dev->clk[index], rate);
 	}
 
-	for (i = 0; i < dev->num_clks; i++) {
-		ret = nvhost_module_update_rate(dev, i);
-		if (ret < 0)
-			break;
-	}
+	ret = nvhost_module_update_rate(dev, index);
+
 	mutex_unlock(&client_list_lock);
 	return ret;
 
@@ -486,6 +503,9 @@ int nvhost_module_init(struct nvhost_device *dev)
 	mutex_init(&dev->lock);
 	init_waitqueue_head(&dev->idle_wq);
 	INIT_DELAYED_WORK(&dev->powerstate_down, powerstate_down_handler);
+
+	/* reset the module */
+	do_module_reset_locked(dev);
 
 	/* power gate units that we can power gate */
 	if (dev->can_powergate) {

@@ -129,8 +129,8 @@ static void action_submit_complete(struct nvhost_waitlist *waiter)
 	struct nvhost_channel *channel = waiter->data;
 	int nr_completed = waiter->count;
 
-	nvhost_cdma_update(&channel->cdma);
 	nvhost_module_idle_mult(channel->dev, nr_completed);
+	nvhost_cdma_update(&channel->cdma);
 
 	/*  Add nr_completed to trace */
 	trace_nvhost_channel_submit_complete(channel->dev->name,
@@ -246,10 +246,7 @@ irqreturn_t nvhost_syncpt_thresh_fn(int irq, void *dev_id)
  */
 static void free_syncpt_irq(struct nvhost_intr_syncpt *syncpt)
 {
-	if (syncpt->irq_requested) {
-		free_irq(syncpt->irq, syncpt);
-		syncpt->irq_requested = 0;
-	}
+	syncpt->irq_requested = 0;
 }
 
 
@@ -358,6 +355,7 @@ int nvhost_intr_init(struct nvhost_intr *intr, u32 irq_gen, u32 irq_sync)
 
 	mutex_init(&intr->mutex);
 	intr->host_syncpt_irq_base = irq_sync;
+	intr->wq = create_workqueue("host_syncpt");
 	intr_op().init_host_sync(intr);
 	intr->host_general_irq = irq_gen;
 	intr->host_general_irq_requested = false;
@@ -383,6 +381,7 @@ int nvhost_intr_init(struct nvhost_intr *intr, u32 irq_gen, u32 irq_sync)
 void nvhost_intr_deinit(struct nvhost_intr *intr)
 {
 	nvhost_intr_stop(intr);
+	destroy_workqueue(intr->wq);
 }
 
 void nvhost_intr_start(struct nvhost_intr *intr, u32 hz)
@@ -436,6 +435,7 @@ void nvhost_intr_stop(struct nvhost_intr *intr)
 	}
 
 	intr_op().free_host_general_irq(intr);
+	intr_op().free_syncpt_irq(intr);
 
 	mutex_unlock(&intr->mutex);
 }

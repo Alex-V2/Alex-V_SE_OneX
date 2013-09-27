@@ -27,6 +27,7 @@
 #include <linux/file.h>
 #include <linux/clk.h>
 #include <linux/hrtimer.h>
+#include <linux/firmware.h>
 
 #include <trace/events/nvhost.h>
 
@@ -196,13 +197,17 @@ static int set_submit(struct nvhost_channel_userctx *ctx)
 
 	ctx->job = nvhost_job_alloc(ctx->ch,
 			ctx->hwctx,
-			&ctx->hdr,
-			ctx->memmgr,
-			ctx->priority,
-			ctx->clientid);
+			ctx->hdr.num_cmdbufs,
+			ctx->hdr.num_relocs,
+			ctx->hdr.num_waitchks,
+			ctx->memmgr);
 	if (!ctx->job)
 		return -ENOMEM;
 	ctx->job->timeout = ctx->timeout;
+	ctx->job->syncpt_id = ctx->hdr.syncpt_id;
+	ctx->job->syncpt_incrs = ctx->hdr.syncpt_incrs;
+	ctx->job->priority = ctx->priority;
+	ctx->job->clientid = ctx->clientid;
 
 	if (ctx->hdr.submit_version >= NVHOST_SUBMIT_VERSION_V2)
 		ctx->num_relocshifts = ctx->hdr.num_relocs;
@@ -307,8 +312,7 @@ static ssize_t nvhost_channelwrite(struct file *filp, const char __user *buf,
 				break;
 			}
 			trace_nvhost_channel_write_waitchks(
-			  chname, numwaitchks,
-			  hdr->waitchk_mask);
+			  chname, numwaitchks);
 			job->num_waitchk += numwaitchks;
 			hdr->num_waitchks -= numwaitchks;
 		} else if (priv->num_relocshifts) {
@@ -389,12 +393,198 @@ static int nvhost_ioctl_channel_flush(
 	return err;
 }
 
+static int nvhost_ioctl_channel_submit(struct nvhost_channel_userctx *ctx,
+		struct nvhost_submit_args *args)
+{
+	struct nvhost_job *job;
+	int num_cmdbufs = args->num_cmdbufs;
+	int num_relocs = args->num_relocs;
+	int num_waitchks = args->num_waitchks;
+	struct nvhost_cmdbuf __user *cmdbufs = args->cmdbufs;
+	struct nvhost_reloc __user *relocs = args->relocs;
+	struct nvhost_reloc_shift __user *reloc_shifts = args->reloc_shifts;
+	struct nvhost_waitchk __user *waitchks = args->waitchks;
+	struct nvhost_syncpt_incr syncpt_incr;
+	int err;
+
+	/* We don't yet support other than one nvhost_syncpt_incrs per submit */
+	if (args->num_syncpt_incrs != 1)
+		return -EINVAL;
+
+	job = nvhost_job_alloc(ctx->ch,
+			ctx->hwctx,
+			args->num_cmdbufs,
+			args->num_relocs,
+			args->num_waitchks,
+			ctx->memmgr);
+	if (!job)
+		return -ENOMEM;
+
+	job->num_relocs = args->num_relocs;
+	job->num_waitchk = args->num_waitchks;
+	job->priority = ctx->priority;
+	job->clientid = ctx->clientid;
+
+	while (num_cmdbufs) {
+		struct nvhost_cmdbuf cmdbuf;
+		err = copy_from_user(&cmdbuf, cmdbufs, sizeof(cmdbuf));
+		if (err)
+			goto fail;
+		nvhost_job_add_gather(job,
+				cmdbuf.mem, cmdbuf.words, cmdbuf.offset);
+		num_cmdbufs--;
+		cmdbufs++;
+	}
+
+	err = copy_from_user(job->relocarray,
+			relocs, sizeof(*relocs) * num_relocs);
+	if (err)
+		goto fail;
+
+	err = copy_from_user(job->relocshiftarray,
+			reloc_shifts, sizeof(*reloc_shifts) * num_relocs);
+	if (err)
+		goto fail;
+
+	err = copy_from_user(job->waitchk,
+			waitchks, sizeof(*waitchks) * num_waitchks);
+	if (err)
+		goto fail;
+
+	err = copy_from_user(&syncpt_incr,
+			args->syncpt_incrs, sizeof(syncpt_incr));
+	if (err)
+		goto fail;
+	job->syncpt_id = syncpt_incr.syncpt_id;
+	job->syncpt_incrs = syncpt_incr.syncpt_incrs;
+
+	trace_nvhost_channel_submit(ctx->ch->dev->name,
+		job->num_gathers, job->num_relocs, job->num_waitchk,
+		job->syncpt_id, job->syncpt_incrs);
+
+	err = nvhost_job_pin(job, &nvhost_get_host(ctx->ch->dev)->syncpt);
+	if (err)
+		goto fail;
+
+	if (args->timeout)
+		job->timeout = min(ctx->timeout, args->timeout);
+	else
+		job->timeout = ctx->timeout;
+
+	err = nvhost_channel_submit(job);
+	if (err)
+		goto fail_submit;
+
+	args->fence = job->syncpt_end;
+
+	nvhost_job_put(job);
+
+	return 0;
+
+fail_submit:
+	nvhost_job_unpin(job);
+fail:
+	nvhost_job_put(job);
+	return err;
+}
+
 static int nvhost_ioctl_channel_read_3d_reg(struct nvhost_channel_userctx *ctx,
 	struct nvhost_read_3d_reg_args *args)
 {
-	BUG_ON(!channel_op().read3dreg);
-	return channel_op().read3dreg(ctx->ch, ctx->hwctx,
+	return nvhost_channel_read_reg(ctx->ch, ctx->hwctx,
 			args->offset, &args->value);
+}
+
+static int moduleid_to_index(struct nvhost_device *dev, u32 moduleid)
+{
+	int i;
+
+	for (i = 0; i < NVHOST_MODULE_MAX_CLOCKS; i++) {
+		if (dev->clocks[i].moduleid == moduleid)
+			return i;
+	}
+
+	/* Old user space is sending a random number in args. Return clock
+	 * zero in these cases. */
+	return 0;
+}
+
+static int nvhost_ioctl_channel_set_rate(struct nvhost_channel_userctx *ctx,
+	u32 moduleid, u32 rate)
+{
+	int index = moduleid ? moduleid_to_index(ctx->ch->dev, moduleid) : 0;
+
+	return nvhost_module_set_rate(ctx->ch->dev, ctx, rate, index);
+}
+
+static int nvhost_ioctl_channel_get_rate(struct nvhost_channel_userctx *ctx,
+	u32 moduleid, u32 *rate)
+{
+	int index = moduleid ? moduleid_to_index(ctx->ch->dev, moduleid) : 0;
+
+	return nvhost_module_get_rate(ctx->ch->dev,
+			(unsigned long *)rate, index);
+}
+
+static int nvhost_ioctl_channel_module_regrdwr(
+	struct nvhost_channel_userctx *ctx,
+	struct nvhost_ctrl_module_regrdwr_args *args)
+{
+	u32 num_offsets = args->num_offsets;
+	u32 *offsets = args->offsets;
+	u32 *values = args->values;
+	u32 vals[64];
+	struct nvhost_device *ndev;
+
+	trace_nvhost_ioctl_channel_module_regrdwr(args->id,
+		args->num_offsets, args->write);
+
+	/* Check that there is something to read and that block size is
+	 * u32 aligned */
+	if (num_offsets == 0 || args->block_size & 3)
+		return -EINVAL;
+
+	ndev = ctx->ch->dev;
+	BUG_ON(!ndev);
+
+	while (num_offsets--) {
+		int err;
+		u32 offs;
+		int remaining = args->block_size >> 2;
+
+		if (get_user(offs, offsets))
+			return -EFAULT;
+
+		offsets++;
+		while (remaining) {
+			int batch = min(remaining, 64);
+			if (args->write) {
+				if (copy_from_user(vals, values,
+						batch * sizeof(u32)))
+					return -EFAULT;
+
+				err = nvhost_write_module_regs(ndev,
+					offs, batch, vals);
+				if (err)
+					return err;
+			} else {
+				err = nvhost_read_module_regs(ndev,
+						offs, batch, vals);
+				if (err)
+					return err;
+
+				if (copy_to_user(values, vals,
+						batch * sizeof(u32)))
+					return -EFAULT;
+			}
+
+			remaining -= batch;
+			offs += batch * sizeof(u32);
+			values += batch;
+		}
+	}
+
+	return 0;
 }
 
 static long nvhost_channelctl(struct file *filp,
@@ -490,22 +680,20 @@ static long nvhost_channelctl(struct file *filp,
 		break;
 	case NVHOST_IOCTL_CHANNEL_GET_CLK_RATE:
 	{
-		unsigned long rate;
 		struct nvhost_clk_rate_args *arg =
 				(struct nvhost_clk_rate_args *)buf;
 
-		err = nvhost_module_get_rate(priv->ch->dev, &rate, 0);
-		if (err == 0)
-			arg->rate = rate;
+		err = nvhost_ioctl_channel_get_rate(priv,
+				arg->moduleid, &arg->rate);
 		break;
 	}
 	case NVHOST_IOCTL_CHANNEL_SET_CLK_RATE:
 	{
 		struct nvhost_clk_rate_args *arg =
 				(struct nvhost_clk_rate_args *)buf;
-		unsigned long rate = (unsigned long)arg->rate;
 
-		err = nvhost_module_set_rate(priv->ch->dev, priv, rate, 0);
+		err = nvhost_ioctl_channel_set_rate(priv,
+			arg->moduleid, arg->rate);
 		break;
 	}
 	case NVHOST_IOCTL_CHANNEL_SET_TIMEOUT:
@@ -522,6 +710,12 @@ static long nvhost_channelctl(struct file *filp,
 	case NVHOST_IOCTL_CHANNEL_SET_PRIORITY:
 		priv->priority =
 			(u32)((struct nvhost_set_priority_args *)buf)->priority;
+		break;
+	case NVHOST_IOCTL_CHANNEL_MODULE_REGRDWR:
+		err = nvhost_ioctl_channel_module_regrdwr(priv, (void *)buf);
+		break;
+	case NVHOST_IOCTL_CHANNEL_SUBMIT:
+		err = nvhost_ioctl_channel_submit(priv, (void *)buf);
 		break;
 	default:
 		err = -ENOTTY;
@@ -657,4 +851,55 @@ fail:
 	dev_err(&dev->dev, "failed to get register memory\n");
 
 	return -ENXIO;
+}
+
+void nvhost_client_device_put_resources(struct nvhost_device *dev)
+{
+	struct resource *r;
+
+	r = nvhost_get_resource(dev, IORESOURCE_MEM, 0);
+	BUG_ON(!r);
+
+	iounmap(dev->aperture);
+
+	release_mem_region(r->start, resource_size(r));
+}
+
+/* This is a simple wrapper around request_firmware that takes
+ * 'fw_name' and if available applies a SOC relative path prefix to it.
+ * The caller is responsible for calling release_firmware later.
+ */
+const struct firmware *
+nvhost_client_request_firmware(struct nvhost_device *dev, const char *fw_name)
+{
+	struct nvhost_chip_support *op = nvhost_get_chip_ops();
+	const struct firmware *fw;
+	char *fw_path = NULL;
+	int path_len, err;
+
+	if (!fw_name)
+		return NULL;
+
+	if (op->soc_name) {
+		path_len = strlen(fw_name) + strlen(op->soc_name);
+		path_len +=2; /* for the path separator and zero terminator*/
+
+		fw_path = kzalloc(sizeof(*fw_path) * path_len,
+				     GFP_KERNEL);
+		if (!fw_path)
+			return NULL;
+
+		sprintf(fw_path, "%s/%s", op->soc_name, fw_name);
+		fw_name = fw_path;
+	}
+
+	err = request_firmware(&fw, fw_name, &dev->dev);
+	kfree(fw_path);
+	if (err) {
+		dev_err(&dev->dev, "failed to get firmware\n");
+		return NULL;
+	}
+
+	/* note: caller must release_firmware */
+	return fw;
 }

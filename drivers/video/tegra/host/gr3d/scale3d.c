@@ -47,6 +47,11 @@
 static int scale3d_is_enabled(void);
 static void scale3d_enable(int enable);
 
+#ifdef CONFIG_TRIPNDROID_FRAMEWORK
+extern unsigned int powersaving_active;
+extern unsigned int tdf_suspend_state;
+#endif
+
 #define POW2(x) ((x) * (x))
 #define CAMERA_3D_CLK 352000000
 #define CAMERA_3D_EMC_CLK 437000000
@@ -217,12 +222,29 @@ static void scale3d_clocks_handler(struct work_struct *work)
 {
 	unsigned int scale;
 
+#ifdef CONFIG_TRIPNDROID_FRAMEWORK
+	unsigned long curr;
+	curr = clk_get_rate(scale3d.clk_3d);
+
+	if ((powersaving_active == 1) && (tdf_suspend_state == 0)) {
+		if (curr != 192000000) {
+			clk_set_rate(scale3d.clk_3d, 192000000);
+			clk_set_rate(scale3d.clk_3d2, 192000000);
+		}
+	}
+	else {
+#endif
+
 	mutex_lock(&scale3d.lock);
 	scale = scale3d.scale;
 	mutex_unlock(&scale3d.lock);
 
 	if (scale != 0)
 		scale3d_clocks(scale);
+
+#ifdef CONFIG_TRIPNDROID_FRAMEWORK
+	}
+#endif
 }
 
 void nvhost_scale3d_suspend(struct nvhost_device *dev)
@@ -261,6 +283,7 @@ static void reset_3d_clocks(void)
 					clk_round_rate(scale3d.clk_3d_emc, UINT_MAX));
 		}
 	}
+
 	t = ktime_get();
 
 	hz = clk_get_rate(scale3d.clk_3d);
@@ -443,6 +466,9 @@ static void scaling_state_check(ktime_t time)
 		scale3d.fast_frame = time;
 		/* if too busy, scale up */
 		if (idleness < scale3d.idle_min) {
+#ifdef CONFIG_TRIPNDROID_FRAMEWORK
+if (powersaving_active != 1) {
+#endif
 			scale3d.is_scaled = 0;
 			scale3d.fast_up_count++;
 			if (scale3d.p_verbosity >= 5)
@@ -452,6 +478,9 @@ static void scaling_state_check(ktime_t time)
 			reset_3d_clocks();
 			reset_scaling_counters(time);
 			return;
+#ifdef CONFIG_TRIPNDROID_FRAMEWORK
+}
+#endif
 		}
 		scale3d.idle_short_term_total = 0;
 		scale3d.last_short_term_idle = time;
@@ -465,6 +494,11 @@ static void scaling_state_check(ktime_t time)
 			pr_info("scale3d: idle %lu, ~%lu%%\n",
 				scale3d.idle_total, idleness);
 
+#ifdef CONFIG_TRIPNDROID_FRAMEWORK
+	if (powersaving_active == 1) {
+		idleness = 20;
+	}
+#endif
 		if (idleness > scale3d.idle_max) {
 			if (!scale3d.is_scaled) {
 				scale3d.is_scaled = 1;

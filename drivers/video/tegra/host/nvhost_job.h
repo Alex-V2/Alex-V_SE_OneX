@@ -22,15 +22,18 @@
 #define __NVHOST_JOB_H
 
 #include <linux/nvhost_ioctl.h>
+#include <linux/kref.h>
 
 struct nvhost_channel;
 struct nvhost_hwctx;
 struct nvhost_waitchk;
 struct nvhost_syncpt;
+struct sg_table;
 
 struct nvhost_job_gather {
 	u32 words;
-	phys_addr_t mem;
+	struct sg_table *mem_sgt;
+	dma_addr_t mem_base;
 	u32 mem_id;
 	int offset;
 	struct mem_handle *ref;
@@ -63,14 +66,17 @@ struct nvhost_job {
 	/* Wait checks to be processed at submit time */
 	struct nvhost_waitchk *waitchk;
 	int num_waitchk;
-	u32 waitchk_mask;
 
 	/* Array of handles to be pinned & unpinned */
 	struct nvhost_reloc *relocarray;
 	struct nvhost_reloc_shift *relocshiftarray;
 	int num_relocs;
-	struct mem_handle **unpins;
+	struct nvhost_job_unpin *unpins;
 	int num_unpins;
+
+	dma_addr_t *addr_phys;
+	dma_addr_t *gather_addr_phys;
+	dma_addr_t *reloc_addr_phys;
 
 	/* Sync point id, number of increments and end related to the submit */
 	u32 syncpt_id;
@@ -100,9 +106,8 @@ struct nvhost_job {
  */
 struct nvhost_job *nvhost_job_alloc(struct nvhost_channel *ch,
 		struct nvhost_hwctx *hwctx,
-		struct nvhost_submit_hdr_ext *hdr,
-		struct mem_mgr *memmgr,
-		int priority, int clientid);
+		int num_cmdbufs, int num_relocs, int num_waitchks,
+		struct mem_mgr *memmgr);
 
 /*
  * Add a gather to a job.

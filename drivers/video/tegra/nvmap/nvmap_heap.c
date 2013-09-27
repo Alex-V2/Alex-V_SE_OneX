@@ -107,7 +107,7 @@ struct list_block {
 	struct nvmap_heap_block block;
 	struct list_head all_list;
 	unsigned int mem_prot;
-	unsigned long orig_addr;
+	phys_addr_t orig_addr;
 	size_t size;
 	size_t align;
 	struct nvmap_heap *heap;
@@ -186,11 +186,11 @@ static void buddy_stat(struct buddy_heap *heap, struct heap_stat *stat)
 /* returns the free size of the heap (including any free blocks in any
  * buddy-heap suballocators; must be called while holding the parent
  * heap's lock. */
-static unsigned long heap_stat(struct nvmap_heap *heap, struct heap_stat *stat)
+static phys_addr_t heap_stat(struct nvmap_heap *heap, struct heap_stat *stat)
 {
 	struct buddy_heap *bh;
 	struct list_block *l = NULL;
-	unsigned long base = -1ul;
+	phys_addr_t base = -1ul;
 
 	memset(stat, 0, sizeof(*stat));
 	mutex_lock(&heap->lock);
@@ -279,7 +279,7 @@ static ssize_t heap_stat_show(struct device *dev,
 {
 	struct nvmap_heap *heap = container_of(dev, struct nvmap_heap, dev);
 	struct heap_stat stat;
-	unsigned long base;
+	phys_addr_t base;
 
 	base = heap_stat(heap, &stat);
 
@@ -296,7 +296,7 @@ static ssize_t heap_stat_show(struct device *dev,
 	else if (attr == &heap_stat_free_size)
 		return sprintf(buf, "%u\n", stat.free);
 	else if (attr == &heap_stat_base)
-		return sprintf(buf, "%08lx\n", base);
+		return sprintf(buf, "%08llx\n", (unsigned long long)base);
 	else
 		return -EINVAL;
 }
@@ -391,12 +391,12 @@ static struct buddy_heap *do_buddy_free(struct nvmap_heap_block *block)
 static struct nvmap_heap_block *do_heap_alloc(struct nvmap_heap *heap,
 					      size_t len, size_t align,
 					      unsigned int mem_prot,
-					      unsigned long base_max)
+					      phys_addr_t base_max)
 {
 	struct list_block *b = NULL;
 	struct list_block *i = NULL;
 	struct list_block *rem = NULL;
-	unsigned long fix_base;
+	phys_addr_t fix_base;
 	enum direction dir;
 
 	/* since pages are only mappable with one cache attribute,
@@ -619,7 +619,7 @@ static struct nvmap_heap_block *do_buddy_alloc(struct nvmap_heap *h,
 #ifdef CONFIG_NVMAP_CARVEOUT_COMPACTOR
 
 static int do_heap_copy_listblock(struct nvmap_device *dev,
-		 unsigned long dst_base, unsigned long src_base, size_t len)
+		 phys_addr_t dst_base, phys_addr_t src_base, size_t len)
 {
 	pte_t **pte_src = NULL;
 	pte_t **pte_dst = NULL;
@@ -627,8 +627,8 @@ static int do_heap_copy_listblock(struct nvmap_device *dev,
 	void *addr_dst = NULL;
 	unsigned long kaddr_src;
 	unsigned long kaddr_dst;
-	unsigned long phys_src = src_base;
-	unsigned long phys_dst = dst_base;
+	phys_addr_t phys_src = src_base;
+	phys_addr_t phys_dst = dst_base;
 	unsigned long pfn_src;
 	unsigned long pfn_dst;
 	int error = 0;
@@ -693,8 +693,8 @@ static struct nvmap_heap_block *do_heap_relocate_listblock(
 	struct nvmap_heap_block *heap_block_new = NULL;
 	struct nvmap_heap *heap = block->heap;
 	struct nvmap_handle *handle = heap_block->handle;
-	unsigned long src_base = heap_block->base;
-	unsigned long dst_base;
+	phys_addr_t src_base = heap_block->base;
+	phys_addr_t dst_base;
 	size_t src_size = block->size;
 	size_t src_align = block->align;
 	unsigned int src_prot = block->mem_prot;
@@ -748,12 +748,14 @@ static struct nvmap_heap_block *do_heap_relocate_listblock(
 	/* copy source data to new block location */
 	dst_base = heap_block_new->base;
 
-	/* new allocation should always go lower addresses */
-	BUG_ON(dst_base >= src_base);
+	/* new allocation should always go lower addresses, or stay same */
+	BUG_ON(dst_base > src_base);
 
-	error = do_heap_copy_listblock(handle->dev,
-				dst_base, src_base, src_size);
-	BUG_ON(error);
+	if (dst_base != src_base) {
+		error = do_heap_copy_listblock(handle->dev,
+					dst_base, src_base, src_size);
+		BUG_ON(error);
+	}
 
 fail:
 	mutex_unlock(&share->pin_lock);
@@ -797,7 +799,6 @@ static void nvmap_heap_compact(struct nvmap_heap *heap,
 			BUG_ON(block_prev->block.type != BLOCK_FIRST_FIT);
 
 			if (do_heap_relocate_listblock(block_prev, true)) {
-
 				/* After relocation current free block can be
 				 * destroyed when it is merged with previous
 				 * free block. Updated pointer to new free
@@ -809,13 +810,24 @@ static void nvmap_heap_compact(struct nvmap_heap *heap,
 		}
 
 		if (ptr_next != &heap->all_list) {
+			struct nvmap_heap_block *block_new;
+			phys_addr_t old_base;
 
 			block_next = list_entry(ptr_next,
 					struct list_block, all_list);
 
 			BUG_ON(block_next->block.type != BLOCK_FIRST_FIT);
 
-			if (do_heap_relocate_listblock(block_next, fast)) {
+			old_base = block_next->block.base;
+			block_new = do_heap_relocate_listblock(block_next,
+					fast);
+			if (block_new && block_new->base == old_base) {
+				/* When doing full heap compaction, the block
+				 * can end up relocated in the same location.
+				 * That means nothing was really accomplished,
+				 * but block pointers got invalidated. */
+				ptr_next = ptr_prev->next->next;
+			} else if (block_new) {
 				ptr = ptr_prev->next;
 				relocation_count++;
 				continue;
@@ -963,7 +975,7 @@ struct nvmap_heap *nvmap_heap_create(struct device *parent, const char *name,
 	}
 
 	if (WARN_ON(buddy_size && (base & (buddy_size - 1)))) {
-		unsigned long orig = base;
+		phys_addr_t orig = base;
 		dev_warn(parent, "%s: base address %p not aligned to "
 			 "buddy_size %u\n", __func__, (void *)base, buddy_size);
 		base = ALIGN(base, buddy_size);
