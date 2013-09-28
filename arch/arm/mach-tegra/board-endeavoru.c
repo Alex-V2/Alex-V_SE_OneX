@@ -52,10 +52,6 @@
 #include <linux/tegra_vibrator_enr.h>
 #endif
 
-#ifdef CONFIG_TRIPNDROID_VIBRATOR
-#include <linux/tripndroid_vibrator.h>
-#endif
-
 #include <mach/clk.h>
 #include <mach/iomap.h>
 #include <mach/irqs.h>
@@ -77,7 +73,7 @@
 #include <mach/mhl.h>
 #include <mach/tegra-bb-power.h>
 #include <mach/htc_bdaddress.h>
-#include <mach/htc_util.h>
+//#include <mach/htc_util.h>
 #include "board.h"
 #include "clock.h"
 #include "board-endeavoru.h"
@@ -184,7 +180,7 @@ static struct led_i2c_config lp5521_led_config[] = {
 	{
 		.name = "button-backlight",
                 .led_cur = 2,
-                .led_lux = 55,
+                .led_lux = 25,
 
 	},
 };
@@ -298,28 +294,6 @@ static void tegra_vibrator_init(void)
 }
 #endif
 
-#ifdef CONFIG_TRIPNDROID_VIBRATOR
-static struct vibrator_platform_data vibrator_data = {
-	.pwm_data={
-		.name = "vibrator",
-		.bank = 0,
-	},
-	.pwm_gpio = TEGRA_GPIO_PH0,
-	.ena_gpio = TEGRA_GPIO_PF1,
-	.pwr_gpio = TEGRA_GPIO_PE7,
-};
-static struct platform_device tegra_vibrator = {
-	.name= VIBRATOR_NAME,
-	.id=-1,
-	.dev = {
-		.platform_data=&vibrator_data,
-	},
-};
-static void tripndroid_vibrator_init(void)
-{
-	platform_device_register(&tegra_vibrator);
-}
-#endif
 
 static struct platform_device endeavoru_rfkill = {
 	.name = "endeavoru_rfkill",
@@ -895,19 +869,15 @@ static void __init endeavoru_uart_init(void)
 	}
 	endeavoru_uart_pdata.parent_clk_list = uart_parent_clk;
 	endeavoru_uart_pdata.parent_clk_count = ARRAY_SIZE(uart_parent_clk);
-
-/* GPS use UARTE
 	endeavoru_loopback_uart_pdata.parent_clk_list = uart_parent_clk;
-	endeavoru_loopback_uart_pdata.parent_clk_count =
-						ARRAY_SIZE(uart_parent_clk);
+	endeavoru_loopback_uart_pdata.parent_clk_count = ARRAY_SIZE(uart_parent_clk);
 	endeavoru_loopback_uart_pdata.is_loopback = true;
-*/
 
 	tegra_uarta_device.dev.platform_data = &endeavoru_uart_pdata;
 	tegra_uartb_device.dev.platform_data = &endeavoru_uart_pdata;
 	tegra_uartc_device.dev.platform_data = &endeavoru_uart_pdata;
 	tegra_uartd_device.dev.platform_data = &endeavoru_uart_pdata;
-	tegra_uarte_device.dev.platform_data = &endeavoru_uart_pdata; // Used for BRCM GPS.
+	//tegra_uarte_device.dev.platform_data = &endeavoru_uart_pdata; // Used for BRCM GPS.
 
 #ifdef CONFIG_BT_CTS_WAKEUP
 	int board_id = htc_get_pcbid_info();
@@ -934,10 +904,10 @@ static void __init endeavoru_uart_init(void)
 	tegra_uartc_device.name = "tegra_uart_brcm"; /* for brcm */
 #endif
 
-/* GPS uses UARTE
+
 	// UARTE is used for loopback test purpose
 	tegra_uarte_device.dev.platform_data = &endeavoru_loopback_uart_pdata;
-*/
+
 
 	/* Register low speed only if it is selected */
 	if (!is_tegra_debug_uartport_hs())
@@ -1179,7 +1149,7 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_y_max = 1770,
 		.display_width = 720,
 		.display_height = 1280,
-		.notifyFinger = NULL, /* restore browser cap, */
+		//.notifyFinger = restoreCap, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.report_type = SYN_AND_REPORT_TYPE_B,
@@ -1237,7 +1207,7 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_x_max = 1100,
 		.abs_y_min = 0,
 		.abs_y_max = 1770,
-		.notifyFinger = NULL, /* restore browser cap, */
+		//.notifyFinger = restoreCap, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.default_config = 2,
@@ -1287,7 +1257,7 @@ static struct synaptics_i2c_rmi_platform_data edge_ts_3k_data_XB[] = {
 		.abs_x_max = 1100,
 		.abs_y_min = 0,
 		.abs_y_max = 1770,
-		.notifyFinger = NULL, /* restore browser cap, */
+		//.notifyFinger = restoreCap, /* restore browser cap, */
 		.gpio_irq = TOUCH_GPIO_IRQ,
 		.power = powerfun,
 		.default_config = 2,
@@ -1670,7 +1640,7 @@ static struct android_usb_platform_data android_usb_pdata = {
 	.fserial_init_string = "tty,tty:autobot,tty:serial,tty:autobot",
 	.usb_id_pin_gpio = TEGRA_GPIO_PS2,
 	.RndisDisableMPDecision = true,
-	.nluns = 2,
+	.nluns = 1,
 	.support_modem = false,
 };
 
@@ -2234,7 +2204,7 @@ static void __init endeavoru_init(void)
 		sysfs_create_group(properties_kobj, &Aproj_properties_attr_group_XC);
 	}
 	endeavoru_audio_init();
-	//endeavoru_gps_init();
+	endeavoru_gps_init();
 	endeavoru_baseband_init();
 	endeavor_panel_init();
 	endeavoru_emc_init();
@@ -2242,15 +2212,7 @@ static void __init endeavoru_init(void)
 	endeavoru_cam_init();
 	endeavoru_suspend_init();
 	tegra_release_bootloader_fb();
-
-#ifdef CONFIG_TEGRA_VIBRATOR_ENR
 	tegra_vibrator_init();
-#endif
-
-#ifdef CONFIG_TRIPNDROID_VIBRATOR
-	tripndroid_vibrator_init();
-#endif
-
 	leds_lp5521_init();
 	endeavor_flashlight_init();
 #if defined(CONFIG_CABLE_DETECT_ACCESSORY)
@@ -2262,11 +2224,6 @@ static void __init endeavoru_init(void)
 	proc = create_proc_read_entry("dying_processes", 0, NULL, dying_processors_read_proc, NULL);
 	if (!proc)
 		printk(KERN_ERR"Create /proc/dying_processes FAILED!\n");
-
-	if (!!(get_kernel_flag() & KERNEL_FLAG_PM_MONITOR) && board_mfg_mode() != BOARD_MFG_MODE_OFFMODE_CHARGING) {
-		htc_monitor_init();
-		htc_pm_monitor_init();
-	}
 }
 
 static void __init endeavoru_reserve(void)

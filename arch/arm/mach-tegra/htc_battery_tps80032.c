@@ -53,9 +53,6 @@
 #define SET_FAKE_TEMP		0x4000
 #define SET_FAKE_CAPACITY	0x8000
 
-#define BATTERY_DEBUG 0
-
-#if BATTERY_DEBUG
 #define BATT_LOG(fmt, ...) do { \
 	struct timespec ts; \
 	struct rtc_time tm; \
@@ -66,9 +63,6 @@
 	ktime_to_ns(ktime_get()), tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday, \
 	tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec); \
 } while (0)
-#else
-#define BATT_LOG(fmt, ...)
-#endif
 
 #define BATT_ERR(fmt, ...) do { \
 	struct timespec ts; \
@@ -503,9 +497,9 @@ static void usb_status_notifier_func(int online)
 			htc_batt_info.rep.charging_source = CHARGER_AC;
 		} else {
 			if(fast_charge){
-				BATT_LOG("fast_charge is set to force AC charging");	
+				BATT_LOG("fast_charge is set to force AC charging");
 				htc_batt_info.rep.charging_source = CHARGER_AC;
-			} else 
+			} else
 				htc_batt_info.rep.charging_source = CHARGER_USB;
 		}
 		break;
@@ -1612,39 +1606,21 @@ static void htc_battery_complete(struct device *dev)
 #endif
 }
 
-static void reevaluate_charger(void)
+static void reevaluate_charger()
 {
-	char message[16];
-	char *envp[] = { message, NULL };
-
 	BATT_LOG("%s", __func__);
 
-	mutex_lock(&htc_batt_info.info_lock);
-		
 	if ( !!(get_kernel_flag() & ALL_AC_CHARGING) ) {
 		BATT_LOG("Debug flag is set to force AC charging, fake as AC");
 		htc_batt_info.rep.charging_source = CHARGER_AC;
 	} else {
 		if(fast_charge){
-			BATT_LOG("fast_charge is set to force AC charging");	
+			BATT_LOG("fast_charge is set to force AC charging");
 			htc_batt_info.rep.charging_source = CHARGER_AC;
-		} else 
+		} else
 			htc_batt_info.rep.charging_source = CHARGER_USB;
 	}
 
-#if WK_ALARM_NOT_WORK	/* fixme: no use this workaround now since solution is phased in */
-	is_alarm_not_work = 0;
-#endif
-
-	htc_batt_timer.charger_flag =
-			(unsigned int)htc_batt_info.rep.charging_source;
-
-	scnprintf(message, 16, "CHG_SOURCE=%d",
-					htc_batt_info.rep.charging_source);
-
-	update_wake_lock(htc_batt_info.rep.charging_source);
-	mutex_unlock(&htc_batt_info.info_lock);
-	
 	if (htc_batt_info.rep.charging_source == CHARGER_USB) {
 		wake_lock(&htc_batt_info.vbus_wake_lock);
 		if (!!(get_kernel_flag() & ALL_AC_CHARGING))
@@ -1657,8 +1633,6 @@ static void reevaluate_charger(void)
 		tps80032_charger_set_ctrl(POWER_SUPPLY_ENABLE_FAST_CHARGE);
 		wake_unlock(&htc_batt_info.vbus_wake_lock);
 	}
-
-	kobject_uevent_env(&htc_batt_info.batt_cable_kobj, KOBJ_CHANGE, envp);	
 }
 
 static struct dev_pm_ops htc_battery_tps80032_pm_ops = {
@@ -1685,13 +1659,12 @@ fast_charge_store(struct device *dev,
 		if(fast_charge != value){
 			fast_charge = value;
 			BATT_LOG("set fast_charge %d", fast_charge);
-			if (htc_batt_info.online != CONNECT_TYPE_NONE && htc_batt_info.online != CONNECT_TYPE_INTERNAL)
-			    reevaluate_charger();
+			reevaluate_charger();
 		}
 	}
 	else
 		return -EINVAL;
-			
+
 	return size;
 }
 
@@ -2114,4 +2087,3 @@ static int __init htc_battery_init(void)
 module_init(htc_battery_init);
 MODULE_DESCRIPTION("HTC Battery Driver");
 MODULE_LICENSE("GPL");
-

@@ -97,7 +97,7 @@ static struct cm3628_platform_data cm3628_pdata = {
 	/*.intr = PSNENOR_INTz,*/
 	.pwr = NULL,
 	.intr = TEGRA_GPIO_PK2,
-	.levels = { 12, 14, 16, 41, 83, 3561, 6082, 6625, 7168, 65535},
+	.levels = { 0xC, 0xE, 0x10, 0x29, 0x53, 0xDE9, 0x17C2, 0x19E4, 0x1C00, 0xFFFF},
 	.golden_adc = 0x1145,
 	.power = NULL,
 	.ALS_slave_address = 0xC0>>1,
@@ -118,7 +118,7 @@ static struct cm3629_platform_data cm3629_pdata = {
 	.model = CAPELLA_CM36282,
 	.ps_select = CM3629_PS1_ONLY,
 	.intr = TEGRA_GPIO_PK2,
-	.levels = { 0x21, 0x3a1, 0x5a0, 0x15ee, 0x2169, 0x307f, 0x3f96, 0x63d3, 0xae13, 0xffff },
+	.levels = { 0xC, 0xE, 0x10, 0xB0, 0x169, 0x1049, 0x1AEB, 0x25BE, 0x3091, 0xFFFF},
 	.golden_adc = 0x13AA,
 	.power = NULL,
 	.cm3629_slave_address = 0xC0>>1,
@@ -126,7 +126,7 @@ static struct cm3629_platform_data cm3629_pdata = {
 	.ps1_thd_set = 0x3,
 	.ps1_thd_no_cal = 0x3,
 	.ps1_thd_with_cal = 0x3,
-	.ps_conf1_val = CM3629_PS_DR_1_320 | CM3629_PS_IT_1_3T | 
+	.ps_conf1_val = CM3629_PS_DR_1_80 | CM3629_PS_IT_2T |
 			CM3629_PS1_PERS_4,
 	.ps_conf2_val = CM3629_PS_ITB_1 | CM3629_PS_ITR_1 |
 			CM3629_PS2_INT_DIS | CM3629_PS1_INT_DIS,
@@ -778,5 +778,4 @@ int __init endeavoru_sensors_init(void)
 	endeavoru_battery_init();
 	return ret;
 }
-
 

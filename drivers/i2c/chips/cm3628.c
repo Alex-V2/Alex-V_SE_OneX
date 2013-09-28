@@ -50,10 +50,10 @@
 #define POLLING_PROXIMITY 1
 #define NO_IGNORE_BOOT_MODE 1
 
-#define NEAR_DELAY_TIME ((1 * HZ) / 1000)
+#define NEAR_DELAY_TIME ((100 * HZ) / 1000)
 
 #ifdef POLLING_PROXIMITY
-#define POLLING_DELAY		2
+#define POLLING_DELAY		200
 #define TH_ADD			3
 #endif
 static int record_init_fail;
@@ -2174,4 +2174,3 @@ module_exit(cm3628_exit);
 
 MODULE_DESCRIPTION("CM3628 Driver");
 MODULE_LICENSE("GPL");
-
